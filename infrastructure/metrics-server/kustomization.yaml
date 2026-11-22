@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - components.yaml
+patches:
+  # Talos kubelets serve self-signed certs (no rotate-server-certificates)
+  - target:
+      kind: Deployment
+      name: metrics-server
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kubelet-insecure-tls
+      # Rightsized 2026-09-28 from kubecost (14d peak 10m / 55Mi vs 100m / 200Mi)
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests
+        value:
+          cpu: 20m
+          memory: 80Mi
+      - op: add
+        path: /spec/template/spec/containers/0/resources/limits
+        value:
+          memory: 200Mi
+      - op: add
+        path: /spec/template/metadata/labels/app.kubernetes.io~1name
+        value: metrics-server

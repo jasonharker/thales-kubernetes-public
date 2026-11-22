@@ -1,0 +1,115 @@
+# kubecost (cost-analyzer X.Y.Z) -- cluster cost allocation for anaximander.
+#
+# Deployed as a pinned HelmRelease rather than raw YAML: the chart renders a frontend,
+# cost-model, aggregator and forecasting workload plus their RBAC, and vendoring that by
+# hand would be a fork to maintain. Same reasoning as the three monitoring stacks already
+# in this directory.
+#
+# The bundled Prometheus is OFF (global.prometheus.enabled: false). kube-prometheus-stack
+# already scrapes cadvisor, kube-state-metrics and node-exporter here, which is the whole
+# dataset kubecost needs; the chart default would stand up a second Prometheus and a second
+# node-exporter DaemonSet on nodes capped at 32 GB (I#59). The cost of that choice: kubecost
+# is now coupled to the kube-prometheus-stack release name -- if that Service is renamed,
+# kubecost shows empty dashboards rather than failing loudly.
+#
+# serviceMonitor is on so Prometheus scrapes kubecost's own metrics. No additionalLabels
+# needed there: kube-prometheus-stack sets serviceMonitorSelectorNilUsesHelmValues: false,
+# so the selector is nil and matches every ServiceMonitor. prometheusRule DOES need
+# release: prometheus -- ruleSelectorNilUsesHelmValues is left at its default of true, so an
+# unlabelled rule is silently ignored.
+#
+# Bundled Grafana is off; this cluster has one Grafana and it stays pinned at X.Y.Z (L#8).
+#
+# Pinned at X.Y.Z, NOT the newer X.Y.Z, and this is not staleness. The 2.9 line is an
+# explicit migration step toward vX.Y.Z ("Kubecost vX.Y.Z is only used for preparing agents to
+# upgrade to vX.Y.Z", quoted verbatim in its own template errors) and it hard-fails at render
+# time with "Missing global federated-store" unless it is given an S3-compatible bucket.
+# THALES Ceph runs no RGW, so there is no bucket to give it. X.Y.Z stores ETL data on its
+# own PV and needs no object store. Revisit when vX.Y.Z ships and the storage story is clear.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kubecost
+  labels:
+    app.kubernetes.io/managed-by: flux
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: kubecost
+  namespace: kubecost
+spec:
+  interval: 1h
+  url: https://kubecost.github.io/cost-analyzer/
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kubecost
+  namespace: kubecost
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: cost-analyzer
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: kubecost
+  values:
+    global:
+      clusterId: anaximander
+      prometheus:
+        enabled: false
+        fqdn: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+      # enabled: false only stops the chart deploying its own Grafana -- the frontend's
+      # nginx config still templates an upstream from domainName, and the chart default
+      # (cost-analyzer-grafana.default.svc) does not exist here, so nginx died at startup
+      # with "host not found in upstream" and took the whole pod into CrashLoopBackOff.
+      # Pointed at the real Grafana; proxy: false so the UI links to it directly rather
+      # than routing through this nginx, which would need its own NetworkPolicy edge.
+      grafana:
+        enabled: false
+        domainName: grafana.monitoring.svc
+        scheme: http
+        proxy: false
+    grafana:
+      enabled: false
+    serviceMonitor:
+      enabled: true
+    prometheusRule:
+      enabled: true
+      additionalLabels:
+        release: prometheus
+    # The aggregator holds the ETL working set in memory while it builds; with no
+    # resources set it inherited the namespace LimitRange default of 1Gi and was
+    # OOMKilled (exit 137) mid-build, leaving the pod stuck at 3/4 ready.
+    # Steady state is ~450Mi, the build peaks above 1Gi.
+    kubecostAggregator:
+      resources:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          memory: 2Gi
+      # Rightsized 2026-09-28 from kubecost's own requestSizingV2 (14d): no
+      # resources set, so it took the LimitRange default 100m / 128Mi while
+      # peaking at 3m / 37Mi. There is no cloud provider here to pull costs from.
+      cloudCost:
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+    # Chart default 200m CPU request; 14d peak 61m.
+    kubecostModel:
+      resources:
+        requests:
+          cpu: 90m
+          memory: 55Mi
+    persistentVolume:
+      enabled: true
+      size: 32Gi
+      storageClass: ceph-rbd
+    service:
+      type: ClusterIP

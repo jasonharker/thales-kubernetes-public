@@ -1,0 +1,20 @@
+# Traefik already serves Prometheus metrics on :9100, and traefik-allow-ingress already
+# admits the monitoring namespace on that port. Scraping pods rather than the Service
+# keeps one target per DaemonSet pod.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: traefik
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - traefik
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s

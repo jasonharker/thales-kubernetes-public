@@ -1,0 +1,61 @@
+# All four volumes on ceph-rbd (the default class, pool k8s-rbd). RWO throughout —
+# a single-replica Nextcloud needs no RWX, which is why the CephFS layer originally
+# planned alongside this app was dropped.
+#
+# ceph-rbd has allowVolumeExpansion: true, so nextcloud-data-rbd can be grown in
+# place later without a redeploy. It starts at 100Gi against ~1.6 TiB usable.
+#
+# All four volumes are in the nightly k8s-rbd-backup run to PBS, crash-consistent;
+# db-backup.yaml is the consistent Postgres copy.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nextcloud-data-rbd
+  namespace: nextcloud
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ceph-rbd
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc-rbd
+  namespace: nextcloud
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ceph-rbd
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data-rbd
+  namespace: nextcloud
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ceph-rbd
+  resources:
+    requests:
+      storage: 512Mi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-backups-rbd
+  namespace: nextcloud
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ceph-rbd
+  resources:
+    requests:
+      storage: 5Gi

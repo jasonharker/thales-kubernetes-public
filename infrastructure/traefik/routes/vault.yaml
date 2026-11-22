@@ -1,0 +1,31 @@
+# vault.thales.internal — internal-only, no cloudflared entry, deliberately. Vault
+# stays off the public tunnel.
+#
+# No authentik-forwardauth: Vault has its own token auth, and forward-auth in
+# front would break the CLI/API path (`vault login`, VAULT_ADDR calls aren't
+# browser sessions) — same reasoning as Jenkins/Grafana/Navidrome.
+#
+# lan-only alongside security-headers: same defense-in-depth as the dashboard
+# route. Depends on externalTrafficPolicy: Local (already load-bearing cluster-
+# wide) to preserve the real client address.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: vault
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`vault.thales.internal`)
+      kind: Rule
+      middlewares:
+        - name: security-headers
+          namespace: traefik
+        - name: lan-only
+          namespace: traefik
+      services:
+        - name: vault
+          namespace: vault
+          port: 8200

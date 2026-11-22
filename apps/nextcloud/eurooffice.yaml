@@ -1,0 +1,101 @@
+# Euro-Office Docs — the document server behind the `eurooffice` ("Nextcloud Office")
+# connector app. Without it the connector registers no document types, and the only
+# "New" entry left in Files is the Text app's markdown file.
+#
+# The standalone image bundles its own Postgres, Redis and RabbitMQ. That state is
+# only the co-editing session cache — documents are saved back to Nextcloud through
+# the callback — so it lives on the container filesystem and no PVC is kept.
+# ponytail: single replica, bundled DBs; move to the Euro-Office/Kubernetes-Docs
+# cluster chart only if more than a handful of concurrent editors ever matters.
+#
+# Served at the /eurooffice sub-path of BOTH nextcloud hostnames (see
+# infrastructure/traefik/routes/nextcloud.yaml), so it needs no hostname, AD record
+# or cloudflared entry of its own, and the editor iframe is same-origin with
+# Nextcloud (security-headers sets X-Frame-Options: SAMEORIGIN). Traefik's
+# stripPrefix sets X-Forwarded-Prefix, which the docservice uses to build its URLs.
+#
+# Connector settings live in Nextcloud's app config, not here (occ, one-time):
+#   DocumentServerUrl          /eurooffice/        (relative — works on both hostnames)
+#   DocumentServerInternalUrl  http://eurooffice.nextcloud.svc.cluster.local/
+#   StorageUrl                 http://nextcloud.nextcloud.svc.cluster.local/
+#   jwt_secret                 = JWT_SECRET below
+# StorageUrl's host must also be in Nextcloud's trusted_domains (config.php — the
+# NEXTCLOUD_TRUSTED_DOMAINS env in nextcloud.yaml only applies at first install).
+#
+# ALLOW_PRIVATE_IP_ADDRESS: the docservice fetches files from the StorageUrl, a
+# ClusterIP; its request filter blocks private addresses by default. JWT still gates
+# every request.
+#
+# Image pinned by index digest: Euro-Office publishes no release tags yet, only
+# `latest` and CI branch tags. Bump by re-resolving `latest` and replacing the digest.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    secret.reloader.stakater.com/auto: "true"
+  name: eurooffice
+  namespace: nextcloud
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: eurooffice
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: eurooffice
+        app: eurooffice
+    spec:
+      containers:
+        - name: eurooffice
+          image: ghcr.io/euro-office/documentserver
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: JWT_ENABLED
+              value: "true"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: eurooffice-secret
+                  key: JWT_SECRET
+            - name: ALLOW_PRIVATE_IP_ADDRESS
+              value: "true"
+          ports:
+            - containerPort: 80
+              protocol: TCP
+          # First start generates fonts and starts four bundled services.
+          startupProbe:
+            tcpSocket:
+              port: 80
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 80
+            periodSeconds: 15
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 3Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eurooffice
+  namespace: nextcloud
+spec:
+  type: ClusterIP
+  selector:
+    app: eurooffice
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP

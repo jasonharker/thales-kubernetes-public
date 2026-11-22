@@ -1,0 +1,95 @@
+# Hand-rolled Postgres, same shape as apps/guacamole and infrastructure/authentik —
+# there is no DB operator in this repo and every stateful app pins its own.
+#
+# Takes the details guacamole's copy lacks but authentik's has: pg_isready probes
+# and a resources block. Image is postgres:16-alpine straight from docker.io, NOT
+# through 10.20.120.31:5000 — the mirror is authentik-only, and the two newest apps
+# (guacamole, n8n) both pull direct.
+#
+# strategy: Recreate, and deliberately NO nodeSelector. The RWO RBD volume is the
+# reason guacamole and authentik pin to anaximander-w4: a rolling update would try
+# to attach the same image twice. Recreate solves that directly by tearing the old
+# pod down first, and leaves the scheduler free instead of stacking a fourth
+# stateful workload onto w4.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: nextcloud
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: POSTGRES_PASSWORD
+            # Subdirectory, not the mount root — RBD volumes carry a lost+found
+            # that initdb refuses to start on.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+              protocol: TCP
+          livenessProbe:
+            exec:
+              # Env-driven, not hardcoded like authentik's copy: POSTGRES_USER/DB
+              # come from Vault, so a literal here would silently fail readiness
+              # if the stored values ever differ. K8s does not expand $() inside
+              # an exec command array, hence the shell.
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              # Env-driven, not hardcoded like authentik's copy: POSTGRES_USER/DB
+              # come from Vault, so a literal here would silently fail readiness
+              # if the stored values ever differ. K8s does not expand $() inside
+              # an exec command array, hence the shell.
+              command: ["sh", "-c", 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"']
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-storage
+          persistentVolumeClaim:
+            claimName: postgres-pvc-rbd

@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - restrict-privileged.yaml
+  - restrict-host-namespaces.yaml
+  - restrict-image-registries.yaml
+  - disallow-latest-tag.yaml
+  - require-memory-limits.yaml
+  - require-name-label.yaml
+  - require-probes.yaml
+  - exceptions/ceph-csi-nodeplugin.yaml
+  - exceptions/node-exporter.yaml
+  - exceptions/guacd.yaml
+  - exceptions/local-path-provisioner.yaml
+  - exceptions/no-probe-target.yaml
+  - exceptions/kube-system-cilium.yaml
+  - exceptions/kube-system-static-pods.yaml
+  - exceptions/coredns.yaml

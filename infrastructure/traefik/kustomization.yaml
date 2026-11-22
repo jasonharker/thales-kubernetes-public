@@ -1,0 +1,9 @@
+# Install only. Middlewares and IngressRoutes live under routes/ as a separate Flux
+# Kustomization — they are Traefik CRDs that this chart installs, so they cannot
+# apply in the same pass.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - repo.yaml
+  - helmrelease.yaml

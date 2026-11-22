@@ -1,0 +1,60 @@
+# Kyverno fails open, so an outage breaks nothing visibly: the guardrails just stop working.
+# These alerts are what make that visible. KyvernoDenyPolicyViolation lists the Deny policies by
+# name because kube-system stays report-only and the two best-practice policies stay in Audit.
+# Background scans run hourly and increase() needs two samples, so it fires on the second scan.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kyverno
+  namespace: monitoring
+  labels:
+    release: prometheus # matches Prometheus's ruleSelector
+spec:
+  groups:
+    - name: kyverno
+      rules:
+        - alert: KyvernoAdmissionUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="kyverno",deployment="kyverno-admission-controller"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Kyverno admission controller has no available replicas"
+            description: >-
+              Webhooks fail open, so pods are being admitted with no Kyverno policy checks. PSA
+              and LimitRange still apply. Check kubectl -n kyverno get pods, then review
+              kubectl get policyreport -A once it recovers for anything admitted meanwhile.
+        - alert: KyvernoAdmissionDegraded
+          expr: kube_deployment_status_replicas_available{namespace="kyverno",deployment="kyverno-admission-controller"} < 2
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Kyverno admission controller is below 2 available replicas"
+            description: >-
+              One more failure leaves admission with no policy checks. The hard topology spread
+              needs two schedulable workers, so check for a Pending replica first.
+        - alert: KyvernoReportsStale
+          expr: kube_deployment_status_replicas_available{namespace="kyverno",deployment="kyverno-reports-controller"} == 0
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Kyverno reports controller is down"
+            description: >-
+              Background scans have stopped, so PolicyReports are going stale and pods admitted
+              during an admission outage will not be caught.
+        - alert: KyvernoDenyPolicyViolation
+          expr: >-
+            sum by (policy_name, resource_namespace) (increase(kyverno_validating_policy_results_total{
+            execution_cause="background_scan",result="fail",resource_namespace!="kube-system",
+            policy_name=~"restrict-privileged|restrict-host-namespaces|restrict-image-registries|disallow-latest-tag|require-memory-limits"
+            }[2h])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.resource_namespace }} has a live violation of {{ $labels.policy_name }}"
+            description: >-
+              A running workload breaks a Deny policy, so it was admitted during a fail-open
+              window or predates the policy. It will be rejected on its next rollout. Find it
+              with kubectl get policyreport -n {{ $labels.resource_namespace }}.

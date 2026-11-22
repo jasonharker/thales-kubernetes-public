@@ -1,0 +1,35 @@
+# node_exporter scrape targets for LXC guests that are not Kubernetes nodes.
+# Hand-applied until 2026-08-11; adopted into git during VLAN migration S4 after
+# three of its four targets were found DOWN (stale addresses Flux could not prune,
+# because a hand-applied object is invisible to `prune: true`).
+apiVersion: v1
+kind: Service
+metadata:
+  name: infrastructure-lxcs
+  namespace: monitoring
+  labels:
+    app: node-exporter
+spec:
+  clusterIP: None
+  type: ClusterIP
+  ports:
+    - name: '9100'
+      port: 9100
+      targetPort: 9100
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: infrastructure-lxcs
+  namespace: monitoring
+subsets:
+  - addresses:
+      - ip: 10.20.120.50
+        targetRef:
+          kind: Node
+          name: hippodamus
+    ports:
+      - name: '9100'
+        port: 9100
+        protocol: TCP

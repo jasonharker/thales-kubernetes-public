@@ -1,0 +1,52 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: promtail
+  namespace: monitoring
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: promtail
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+  values:
+    config:
+      clients:
+        - url: http://loki:3100/loki/api/v1/push
+      # chilon (CT 117) forwards its pfSense syslog here over TCP, RFC5424 octet-counted.
+      snippets:
+        extraScrapeConfigs: |
+          - job_name: syslog
+            syslog:
+              listen_address: 0.0.0.0:1514
+              labels:
+                job: syslog
+            relabel_configs:
+              - source_labels: [__syslog_message_hostname]
+                target_label: host
+              - source_labels: [__syslog_message_app_name]
+                target_label: app
+              - source_labels: [__syslog_message_severity]
+                target_label: severity
+    # Every promtail pod listens; externalTrafficPolicy Local keeps chilon as the source
+    # address, which the monitoring CNP allows by CIDR.
+    extraPorts:
+      syslog:
+        name: tcp-syslog
+        containerPort: 1514
+        protocol: TCP
+        annotations:
+          lbipam.cilium.io/ips: 10.20.130.101
+        service:
+          type: LoadBalancer
+          port: 1514
+          externalTrafficPolicy: Local
+    # Rightsized 2026-09-28 from kubecost (14d peak 46m CPU). Memory request
+    # stays at the LimitRange default -- the peak was 143Mi, above it.
+    resources:
+      requests:
+        cpu: 70m
+        memory: 128Mi

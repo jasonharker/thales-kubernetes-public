@@ -1,0 +1,1036 @@
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: lemp-limitrange
+  namespace: lemp
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 4Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: lemp-quota
+  namespace: lemp
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 2Gi
+    limits.cpu: "8"
+    limits.memory: 8Gi
+    pods: "20"
+    persistentvolumeclaims: "10"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: monitoring-limitrange
+  namespace: monitoring
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "4"
+        memory: 8Gi
+      min:
+        cpu: 10m
+        memory: 32Mi
+---
+# secrets bumped 25->35 2026-08-23: AlertManager could not create its
+# web-config Secret with the quota sitting exactly at cap (L#57 --
+# a quota at its limit fails silently, not loudly). Real headroom now,
+# not just +1, matching flux-system-quota.
+# limits.cpu bumped 16->20 2026-08-30: promtail DaemonSet pods carry no
+# explicit resources, so each draws the monitoring-limitrange default
+# (limits.cpu 500m) -- the 7th node's pod could not get that with the
+# quota sitting exactly at cap. Real headroom now, not just +1.
+# pods bumped 35->60 2026-09-03: the namespace was sitting at exactly 35/35,
+# so nothing new could schedule at all -- the Ceph migration's copy Jobs and
+# the Prometheus/Alertmanager StatefulSet recreates each need pod slots (L#57).
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: monitoring-quota
+  namespace: monitoring
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 10Gi
+    limits.cpu: "20"
+    limits.memory: 24Gi
+    pods: "60"
+    persistentvolumeclaims: "10"
+    services: "30"
+    secrets: "35"
+    configmaps: "20"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: authentik-limitrange
+  namespace: authentik
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 256Mi
+      max:
+        cpu: "2"
+        memory: 4Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: authentik-quota
+  namespace: authentik
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 2Gi
+    limits.cpu: "8"
+    limits.memory: 12Gi
+    pods: "20"
+    persistentvolumeclaims: "10"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: guacamole-limitrange
+  namespace: guacamole
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: guacamole-quota
+  namespace: guacamole
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "4"
+    limits.memory: 4Gi
+    pods: "10"
+    persistentvolumeclaims: "5"
+    services: "5"
+    secrets: "10"
+    configmaps: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: media-limitrange
+  namespace: media
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+# bumped 2026-08-27 for the media migration: sized from actual
+# per-container requests/limits with real headroom, not sitting at cap (L#57).
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: media-quota
+  namespace: media
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "11"
+    limits.memory: 12Gi
+    pods: "20"
+    persistentvolumeclaims: "20"
+    services: "15"
+    secrets: "10"
+    configmaps: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: jenkins-limitrange
+  namespace: jenkins
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "1"
+        memory: 1Gi
+      defaultRequest:
+        cpu: 200m
+        memory: 256Mi
+      max:
+        cpu: "4"
+        memory: 6Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: jenkins-quota
+  namespace: jenkins
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "12"
+    limits.memory: 16Gi
+    pods: "20"
+    persistentvolumeclaims: "5"
+    services: "5"
+    secrets: "20"
+    configmaps: "20"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: n8n-limitrange
+  namespace: n8n
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: n8n-quota
+  namespace: n8n
+spec:
+  hard:
+    requests.cpu: "500m"
+    requests.memory: 512Mi
+    limits.cpu: "4"
+    limits.memory: 4Gi
+    pods: "10"
+    persistentvolumeclaims: "5"
+    services: "5"
+    secrets: "10"
+    configmaps: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: flux-system-limitrange
+  namespace: flux-system
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 200m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 25m
+        memory: 32Mi
+---
+# requests.cpu bumped 500m->1 2026-08-30: 350m/500m used by 4 controllers
+# (~50-100m each); image-automation adds 2 more of similar size, which
+# would leave no margin at the current cap.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: flux-system-quota
+  namespace: flux-system
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "8"
+    limits.memory: 8Gi
+    pods: "20"
+    persistentvolumeclaims: "5"
+    services: "10"
+    secrets: "30"
+    configmaps: "30"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: traefik-limitrange
+  namespace: traefik
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 1Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+# pods: 10 against a 3-node DaemonSet (one per worker). Headroom is deliberate —
+# a quota sitting exactly at its pod cap freezes rolling updates silently (L#57).
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: traefik-quota
+  namespace: traefik
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "4"
+    limits.memory: 2Gi
+    pods: "10"
+    persistentvolumeclaims: "0"
+    services: "5"
+    secrets: "20"
+    configmaps: "20"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: cloudflared-limitrange
+  namespace: cloudflared
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 200m
+        memory: 128Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "1"
+        memory: 512Mi
+      min:
+        cpu: 25m
+        memory: 32Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: cloudflared-quota
+  namespace: cloudflared
+spec:
+  hard:
+    requests.cpu: "500m"
+    requests.memory: 512Mi
+    limits.cpu: "2"
+    limits.memory: 1Gi
+    pods: "8"
+    persistentvolumeclaims: "0"
+    services: "3"
+    secrets: "10"
+    configmaps: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: vault-limitrange
+  namespace: vault
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: vault-quota
+  namespace: vault
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "4"
+    limits.memory: 4Gi
+    pods: "10"
+    persistentvolumeclaims: "5"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+---
+# knative-serving: activator/autoscaler/controller/webhook/net-kourier-controller.
+# min.memory 32Mi not 64Mi -- the activator requests 60Mi, the house 64Mi floor rejects it.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: knative-serving-limitrange
+  namespace: knative-serving
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 100Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 50m
+        memory: 32Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: knative-serving-quota
+  namespace: knative-serving
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 2Gi
+    limits.cpu: "12"
+    limits.memory: 10Gi
+    pods: "30"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+---
+# kourier-system: 3scale-kourier-gateway, HPA maxReplicas 10.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: kourier-system-limitrange
+  namespace: kourier-system
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 200m
+        memory: 200Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: kourier-system-quota
+  namespace: kourier-system
+spec:
+  hard:
+    requests.cpu: "3"
+    requests.memory: 3Gi
+    limits.cpu: "12"
+    limits.memory: 10Gi
+    pods: "15"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+---
+# oracle: hestia (1 always-on pod) + pythia ksvc (0-N pods, each with a queue-proxy sidecar).
+# min.cpu 10m not 50m -- queue-proxy requests 25m; the house floor rejects every revision pod.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: oracle-limitrange
+  namespace: oracle
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 10m
+        memory: 16Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: oracle-quota
+  namespace: oracle
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 2Gi
+    limits.cpu: "8"
+    limits.memory: 8Gi
+    pods: "20"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+---
+# ssot-tools: allocator ksvc (0-N pods, each with a queue-proxy sidecar).
+# min.cpu 10m not 50m -- same queue-proxy-vs-house-floor shape as oracle.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ssot-tools-limitrange
+  namespace: ssot-tools
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 10m
+        memory: 16Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ssot-tools-quota
+  namespace: ssot-tools
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "4"
+    limits.memory: 4Gi
+    pods: "10"
+    services: "5"
+    secrets: "10"
+    configmaps: "10"
+---
+# kubecost. The LimitRange defaults are deliberately higher than the lemp/monitoring ones:
+# several cost-analyzer containers declare requests but no limits, so they inherit the
+# default, and the usual 512Mi default OOM-kills the cost-model on first ETL build.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: kubecost-limitrange
+  namespace: kubecost
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "1"
+        memory: 1Gi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 4Gi
+      # Floor is 10m/32Mi, not the 50m/64Mi used elsewhere in this file: cost-analyzer's
+      # sidecars request 10m CPU and 55Mi, and the higher floor rejected every replica of
+      # the main Deployment with FailedCreate while the release itself reported healthy.
+      min:
+        cpu: 10m
+        memory: 32Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: kubecost-quota
+  namespace: kubecost
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 2Gi
+    limits.cpu: "12"
+    # 12Gi, not the 6Gi the aggregator bump alone needs: cost-analyzer rolls with
+    # maxSurge 1, so a rollout stands up a second four-container pod and needs a
+    # full duplicate of the steady-state limits or it is rejected and stalls.
+    limits.memory: 12Gi
+    pods: "10"
+    persistentvolumeclaims: "5"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+---
+# flagger-system: the Flagger controller only. Floor matches the default; the chart's
+# 10m/32Mi request is raised to 50m/64Mi in the HelmRelease values instead.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: flagger-system-limitrange
+  namespace: flagger-system
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "1"
+        memory: 1Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: flagger-system-quota
+  namespace: flagger-system
+spec:
+  hard:
+    requests.cpu: 500m
+    requests.memory: 512Mi
+    limits.cpu: "2"
+    limits.memory: 1Gi
+    pods: "4"
+    services: "4"
+    secrets: "10"
+    configmaps: "10"
+---
+# portfolio-staging: a blue/green rollout runs portfolio-primary and the portfolio canary
+# side by side, plus the loadtester -- and a rolling update surges one more of each. Pods
+# and services are sized for that peak (Flagger generates three Services); a quota at its
+# pod cap freezes a rollout silently on the ReplicaSet (L#57).
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: portfolio-staging-limitrange
+  namespace: portfolio-staging
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 200m
+        memory: 128Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "1"
+        memory: 512Mi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: portfolio-staging-quota
+  namespace: portfolio-staging
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    limits.cpu: "4"
+    limits.memory: 2Gi
+    pods: "10"
+    services: "6"
+    secrets: "10"
+    configmaps: "10"
+---
+# portfolio: production static site, 2 replicas behind Flagger. A rollout runs primary (2)
+# + canary (2) + loadtester, plus the primary's surge on promotion (L#57): 6 pods at peak.
+# Services: portfolio, -primary, -canary, flagger-loadtester.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: portfolio-limitrange
+  namespace: portfolio
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 200m
+        memory: 128Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "1"
+        memory: 512Mi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: portfolio-quota
+  namespace: portfolio
+spec:
+  hard:
+    requests.cpu: 600m
+    requests.memory: 768Mi
+    limits.cpu: "3"
+    limits.memory: 1536Mi
+    pods: "12"
+    services: "6"
+    secrets: "10"
+    configmaps: "10"
+---
+# reloader: the Reloader controller only (infrastructure/helm/reloader.yaml).
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: reloader-limitrange
+  namespace: reloader
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 200m
+        memory: 128Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: 500m
+        memory: 256Mi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: reloader-quota
+  namespace: reloader
+spec:
+  hard:
+    requests.cpu: 200m
+    requests.memory: 256Mi
+    limits.cpu: 500m
+    limits.memory: 512Mi
+    pods: "2"
+    services: "2"
+    secrets: "5"
+    configmaps: "5"
+---
+# city-pulse: serve x2 (+1 rolling surge), postgres, and two CronJobs that never overlap
+# (pg_dump 02:15, nightly 03:00). The nightly pod is the big one: 768Mi/1536Mi, sized from
+# a measured 880 MB resolve peak.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: city-pulse-limitrange
+  namespace: city-pulse
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 200m
+        memory: 128Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "1"
+        memory: 2Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: city-pulse-quota
+  namespace: city-pulse
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 2Gi
+    limits.cpu: "5"
+    limits.memory: 4Gi
+    pods: "10"
+    services: "4"
+    secrets: "10"
+    configmaps: "10"
+---
+# nextcloud: nextcloud, postgres, redis, eurooffice, plus the 01:10 pg_dump CronJob. All four
+# Deployments are Recreate, so there is no surge. Steady state with the dump pod is 700m/1920Mi
+# requests and 4.7/6.5Gi limits. max.memory 4Gi, not the house 2Gi: eurooffice's limit is 3Gi.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: nextcloud-limitrange
+  namespace: nextcloud
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: "2"
+        memory: 4Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: nextcloud-quota
+  namespace: nextcloud
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "8"
+    limits.memory: 10Gi
+    pods: "10"
+    persistentvolumeclaims: "8"
+    services: "8"
+    secrets: "10"
+    configmaps: "10"
+---
+# internal: homepage only (10m/16Mi, 50m/32Mi), +1 rolling surge. The floor is the pod's own
+# request: the house 50m/64Mi floor would reject its next rollout.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: internal-limitrange
+  namespace: internal
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 200m
+        memory: 128Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: 500m
+        memory: 256Mi
+      min:
+        cpu: 10m
+        memory: 16Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: internal-quota
+  namespace: internal
+spec:
+  hard:
+    requests.cpu: 200m
+    requests.memory: 256Mi
+    limits.cpu: "1"
+    limits.memory: 512Mi
+    pods: "4"
+    services: "3"
+    secrets: "5"
+    configmaps: "8"
+---
+# registry: one pod (32Mi/256Mi, no CPU set), +1 rolling surge. It declares no CPU, so it
+# inherits the default: 1 CPU rather than 500m, so Kaniko pushes are not throttled by a limit
+# it never had. Floor 32Mi for the pod's request.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: registry-limitrange
+  namespace: registry
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "1"
+        memory: 256Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 64Mi
+      max:
+        cpu: "2"
+        memory: 1Gi
+      min:
+        cpu: 50m
+        memory: 32Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: registry-quota
+  namespace: registry
+spec:
+  hard:
+    requests.cpu: 500m
+    requests.memory: 256Mi
+    limits.cpu: "4"
+    limits.memory: 1Gi
+    pods: "4"
+    persistentvolumeclaims: "2"
+    services: "3"
+    secrets: "5"
+    configmaps: "5"
+---
+# external-secrets: controller, webhook, cert-controller (each 64Mi/256Mi, no CPU set). An
+# upgrade can surge all three at once: 6 pods, 300m/384Mi requests, 3/1.5Gi limits, all below
+# cap. These pods deliver every app Secret, so a quota at its cap would stall far beyond this
+# namespace (L#57). secrets 15: Helm release history lives here too.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: external-secrets-limitrange
+  namespace: external-secrets
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "1"
+        memory: 1Gi
+      min:
+        cpu: 25m
+        memory: 32Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: external-secrets-quota
+  namespace: external-secrets
+spec:
+  hard:
+    requests.cpu: 500m
+    requests.memory: 512Mi
+    limits.cpu: "4"
+    limits.memory: 3Gi
+    pods: "8"
+    services: "5"
+    secrets: "15"
+    configmaps: "10"
+---
+# backstage: backstage, postgres, and the 02:30 pg_dump CronJob. Steady state 400m/832Mi
+# requests; a rolling update adds a second backstage pod (250m/512Mi) for its duration.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: backstage-limitrange
+  namespace: backstage
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 200m
+        memory: 128Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "1"
+        memory: 2Gi
+      min:
+        cpu: 50m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: backstage-quota
+  namespace: backstage
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 2Gi
+    limits.cpu: "4"
+    limits.memory: 4Gi
+    pods: "10"
+    services: "4"
+    secrets: "10"
+    configmaps: "10"

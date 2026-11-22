@@ -1,0 +1,627 @@
+apiVersion: v1
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>THALES · Internal</title>
+      <link rel="preconnect" href="https://fonts.googleapis.com">
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+      <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;900&family=Syne:wght@300;400;500;600&display=swap" rel="stylesheet">
+      <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+          --bg:              #07080f;
+          --surface:         rgba(255,255,255,0.04);
+          --surface-hover:   rgba(255,255,255,0.07);
+          --border:          rgba(255,255,255,0.07);
+          --text:            #dde4f0;
+          --text-dim:        #8892a4;
+          --text-muted:      #3d4a5c;
+
+          --c-infra:    #38bdf8;
+          --c-monitor:  #fb923c;
+          --c-network:  #34d399;
+          --c-media:    #f472b6;
+          --c-devops:   #a78bfa;
+          --c-external: #fbbf24;
+        }
+
+        body {
+          background: var(--bg);
+          color: var(--text);
+          font-family: 'Syne', sans-serif;
+          min-height: 100vh;
+          overflow-x: hidden;
+          position: relative;
+        }
+
+        /* Atmospheric depth */
+        body::before {
+          content: '';
+          position: fixed;
+          inset: 0;
+          background:
+            radial-gradient(ellipse 900px 700px at -5% 15%,  rgba(56,189,248,0.045)  0%, transparent 65%),
+            radial-gradient(ellipse 700px 900px at 108% 85%, rgba(167,139,250,0.05)  0%, transparent 65%),
+            radial-gradient(ellipse 800px 500px at 55% 110%, rgba(244,114,182,0.03)  0%, transparent 65%);
+          pointer-events: none;
+          z-index: 0;
+        }
+
+        /* Grain texture */
+        body::after {
+          content: '';
+          position: fixed;
+          inset: 0;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+          pointer-events: none;
+          z-index: 0;
+          opacity: 0.5;
+        }
+
+        .container {
+          position: relative;
+          z-index: 1;
+          max-width: 1680px;
+          margin: 0 auto;
+          padding: 0 3.5rem 5rem;
+        }
+
+        @media (min-width: 1440px) {
+          .container { padding: 0 5rem 6rem; }
+        }
+
+        /* ── Header ── */
+        header {
+          padding: 3.5rem 0 2.75rem;
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          border-bottom: 1px solid var(--border);
+          margin-bottom: 3.5rem;
+        }
+
+        @media (min-width: 1440px) {
+          header { padding: 4.5rem 0 3.25rem; margin-bottom: 4rem; }
+        }
+
+        .wordmark {
+          font-family: 'Cinzel', serif;
+          font-size: 3.75rem;
+          font-weight: 900;
+          letter-spacing: 0.18em;
+          line-height: 1;
+          background: linear-gradient(140deg, #ffffff 30%, #7a8ea8 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+        }
+
+        @media (min-width: 1440px) {
+          .wordmark { font-size: 5rem; }
+        }
+
+        .wordmark sub {
+          display: block;
+          font-family: 'Syne', sans-serif;
+          font-size: 0.65rem;
+          font-weight: 500;
+          letter-spacing: 0.4em;
+          text-transform: uppercase;
+          color: var(--text-dim);
+          -webkit-text-fill-color: var(--text-dim);
+          background: none;
+          -webkit-background-clip: unset;
+          background-clip: unset;
+          margin-top: 0.6rem;
+        }
+
+        .header-meta {
+          text-align: right;
+        }
+
+        #clock {
+          font-family: 'Cinzel', serif;
+          font-size: 1.6rem;
+          font-weight: 400;
+          letter-spacing: 0.12em;
+          color: var(--text-dim);
+        }
+
+        @media (min-width: 1440px) {
+          #clock { font-size: 2rem; }
+        }
+
+        #dateline {
+          font-size: 0.62rem;
+          letter-spacing: 0.3em;
+          color: var(--text-muted);
+          text-transform: uppercase;
+          margin-top: 0.35rem;
+        }
+
+        /* ── Category section ── */
+        .category {
+          margin-bottom: 2.75rem;
+          opacity: 0;
+          transform: translateY(16px);
+          animation: rise 0.45s ease forwards;
+        }
+
+        @media (min-width: 1440px) {
+          .category { margin-bottom: 3.5rem; }
+        }
+
+        .category:nth-child(1) { animation-delay: 0.04s; }
+        .category:nth-child(2) { animation-delay: 0.11s; }
+        .category:nth-child(3) { animation-delay: 0.18s; }
+        .category:nth-child(4) { animation-delay: 0.25s; }
+        .category:nth-child(5) { animation-delay: 0.32s; }
+        .category:nth-child(6) { animation-delay: 0.39s; }
+
+        @keyframes rise {
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        .cat-header {
+          display: flex;
+          align-items: center;
+          gap: 0.875rem;
+          margin-bottom: 1.1rem;
+        }
+
+        .cat-pip {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          flex-shrink: 0;
+        }
+
+        .cat-label {
+          font-size: 0.62rem;
+          font-weight: 600;
+          letter-spacing: 0.38em;
+          text-transform: uppercase;
+          white-space: nowrap;
+        }
+
+        .cat-rule {
+          height: 1px;
+          flex: 1;
+          opacity: 0.15;
+        }
+
+        /* ── Grid ── */
+        .grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+          gap: 0.8rem;
+        }
+
+        @media (min-width: 1440px) {
+          .grid {
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 1rem;
+          }
+        }
+
+        /* ── Card ── */
+        .card {
+          display: block;
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 9px;
+          padding: 1rem 1.2rem;
+          text-decoration: none;
+          color: var(--text);
+          position: relative;
+          overflow: hidden;
+          transition:
+            background   0.18s ease,
+            border-color 0.18s ease,
+            transform    0.18s ease,
+            box-shadow   0.18s ease;
+        }
+
+        @media (min-width: 1440px) {
+          .card { padding: 1.2rem 1.5rem; border-radius: 11px; }
+          .card-name { font-size: 0.95rem; }
+          .card-url  { font-size: 0.7rem; }
+        }
+
+        /* Left accent */
+        .card::before {
+          content: '';
+          position: absolute;
+          left: 0; top: 0; bottom: 0;
+          width: 3px;
+          border-radius: 9px 0 0 9px;
+          background: var(--accent);
+          opacity: 0.55;
+          transition: opacity 0.18s ease;
+        }
+
+        /* Hover glow wash */
+        .card::after {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(ellipse at 25% 50%, var(--accent), transparent 72%);
+          opacity: 0;
+          transition: opacity 0.25s ease;
+        }
+
+        .card:hover {
+          background: var(--surface-hover);
+          border-color: var(--accent-border);
+          transform: translateY(-2px);
+          box-shadow: 0 10px 35px var(--accent-shadow);
+        }
+
+        .card:hover::before { opacity: 1; }
+        .card:hover::after  { opacity: 0.045; }
+
+        .card-inner {
+          position: relative;
+          z-index: 1;
+        }
+
+        .card-name {
+          font-size: 0.875rem;
+          font-weight: 600;
+          letter-spacing: 0.02em;
+          color: var(--text);
+          margin-bottom: 0.28rem;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .card-url {
+          font-size: 0.65rem;
+          color: var(--text-muted);
+          letter-spacing: 0.04em;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          font-weight: 400;
+        }
+
+        /* Asterisk on assumed ports */
+        .card-url[data-assumed]::after {
+          content: ' *';
+          color: var(--accent);
+          opacity: 0.75;
+        }
+
+        /* ── Per-category theming ── */
+        .cat-infra   { --cat-color: var(--c-infra);    }
+        .cat-monitor { --cat-color: var(--c-monitor);  }
+        .cat-network { --cat-color: var(--c-network);  }
+        .cat-media   { --cat-color: var(--c-media);    }
+        .cat-devops  { --cat-color: var(--c-devops);   }
+        .cat-external{ --cat-color: var(--c-external); }
+
+        .cat-infra    .cat-pip,   .cat-infra    .cat-rule { background: var(--c-infra);    }
+        .cat-monitor  .cat-pip,   .cat-monitor  .cat-rule { background: var(--c-monitor);  }
+        .cat-network  .cat-pip,   .cat-network  .cat-rule { background: var(--c-network);  }
+        .cat-media    .cat-pip,   .cat-media    .cat-rule { background: var(--c-media);    }
+        .cat-devops   .cat-pip,   .cat-devops   .cat-rule { background: var(--c-devops);   }
+        .cat-external .cat-pip,   .cat-external .cat-rule { background: var(--c-external); }
+
+        .cat-infra    .cat-label { color: var(--c-infra);    }
+        .cat-monitor  .cat-label { color: var(--c-monitor);  }
+        .cat-network  .cat-label { color: var(--c-network);  }
+        .cat-media    .cat-label { color: var(--c-media);    }
+        .cat-devops   .cat-label { color: var(--c-devops);   }
+        .cat-external .cat-label { color: var(--c-external); }
+
+        .cat-infra    .card {
+          --accent: var(--c-infra);
+          --accent-border: rgba(56,189,248,0.22);
+          --accent-shadow: rgba(56,189,248,0.07);
+        }
+        .cat-monitor  .card {
+          --accent: var(--c-monitor);
+          --accent-border: rgba(251,146,60,0.22);
+          --accent-shadow: rgba(251,146,60,0.07);
+        }
+        .cat-network  .card {
+          --accent: var(--c-network);
+          --accent-border: rgba(52,211,153,0.22);
+          --accent-shadow: rgba(52,211,153,0.07);
+        }
+        .cat-media    .card {
+          --accent: var(--c-media);
+          --accent-border: rgba(244,114,182,0.22);
+          --accent-shadow: rgba(244,114,182,0.07);
+        }
+        .cat-devops   .card {
+          --accent: var(--c-devops);
+          --accent-border: rgba(167,139,250,0.22);
+          --accent-shadow: rgba(167,139,250,0.07);
+        }
+        .cat-external .card {
+          --accent: var(--c-external);
+          --accent-border: rgba(251,191,36,0.22);
+          --accent-shadow: rgba(251,191,36,0.07);
+        }
+
+        /* ── Footer ── */
+        footer {
+          border-top: 1px solid var(--border);
+          padding-top: 1.5rem;
+          margin-top: 0.5rem;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.5rem;
+        }
+
+        footer span {
+          font-size: 0.6rem;
+          letter-spacing: 0.25em;
+          color: var(--text-muted);
+          text-transform: uppercase;
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 600px) {
+          .wordmark        { font-size: 2.5rem; }
+          header           { flex-direction: column; align-items: flex-start; gap: 1.5rem; }
+          .header-meta     { text-align: left; }
+          .container       { padding: 0 1.25rem 3rem; }
+        }
+      </style>
+    </head>
+    <body>
+    <div class="container">
+
+      <header>
+        <div class="wordmark">
+          THALES
+          <sub>Internal Services</sub>
+        </div>
+        <div class="header-meta">
+          <div id="clock"></div>
+          <div id="dateline"></div>
+        </div>
+      </header>
+
+      <!-- ── Infrastructure ── -->
+      <section class="category cat-infra">
+        <div class="cat-header">
+          <div class="cat-pip"></div>
+          <span class="cat-label">Infrastructure</span>
+          <div class="cat-rule"></div>
+        </div>
+        <div class="grid">
+          <a class="card" href="https://10.20.110.11:8006" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Proxmox · thales-01</div>
+              <div class="card-url">10.20.110.11:8006</div>
+            </div>
+          </a>
+          <a class="card" href="https://10.20.110.12:8006" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Proxmox · thales-02</div>
+              <div class="card-url">10.20.110.12:8006</div>
+            </div>
+          </a>
+          <a class="card" href="https://10.20.110.13:8006" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Proxmox · thales-03</div>
+              <div class="card-url">10.20.110.13:8006</div>
+            </div>
+          </a>
+          <a class="card" href="https://thales.example.com" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Proxmox · Cluster</div>
+              <div class="card-url">thales.example.com</div>
+            </div>
+          </a>
+          <a class="card" href="http://10.20.120.31:5000" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Registry · zeno</div>
+              <div class="card-url">10.20.120.31:5000</div>
+            </div>
+          </a>
+        </div>
+      </section>
+
+      <!-- ── Monitoring ── -->
+      <section class="category cat-monitor">
+        <div class="cat-header">
+          <div class="cat-pip"></div>
+          <span class="cat-label">Monitoring</span>
+          <div class="cat-rule"></div>
+        </div>
+        <div class="grid">
+          <a class="card" href="https://grafana.example.com" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Grafana</div>
+              <div class="card-url">grafana.example.com</div>
+            </div>
+          </a>
+          <a class="card" href="http://10.20.130.21:30901" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Prometheus</div>
+              <div class="card-url">10.20.130.21:30901</div>
+            </div>
+          </a>
+        </div>
+      </section>
+
+      <!-- ── Network & Security ── -->
+      <section class="category cat-network">
+        <div class="cat-header">
+          <div class="cat-pip"></div>
+          <span class="cat-label">Network &amp; Security</span>
+          <div class="cat-rule"></div>
+        </div>
+        <div class="grid">
+          <a class="card" href="https://10.30.0.250" target="_blank" rel="noreferrer">
+            <div class="card-inner">
+              <div class="card-name">pfSense · leonidas</div>
+              <div class="card-url">10.30.0.250</div>
+            </div>
+          </a>
+          <a class="card" href="http://10.20.120.21:5380" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Technitium · cratylus-01</div>
+              <div class="card-url">10.20.120.21:5380</div>
+            </div>
+          </a>
+          <a class="card" href="http://10.20.120.22:5380" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Technitium · cratylus-02</div>
+              <div class="card-url">10.20.120.22:5380</div>
+            </div>
+          </a>
+          <a class="card" href="http://10.20.120.23:5380" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Technitium · cratylus-03</div>
+              <div class="card-url">10.20.120.23:5380</div>
+            </div>
+          </a>
+          <a class="card" href="https://authentik.example.com" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Authentik</div>
+              <div class="card-url">authentik.example.com</div>
+            </div>
+          </a>
+          <a class="card" href="http://traefik.thales.internal/dashboard/" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Traefik · Dashboard</div>
+              <div class="card-url">traefik.thales.internal/dashboard/</div>
+            </div>
+          </a>
+        </div>
+      </section>
+
+      <!-- ── Media ── -->
+      <section class="category cat-media">
+        <div class="cat-header">
+          <div class="cat-pip"></div>
+          <span class="cat-label">Media</span>
+          <div class="cat-rule"></div>
+        </div>
+        <div class="grid">
+          <a class="card" href="https://music.example.com" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Navidrome</div>
+              <div class="card-url">music.example.com</div>
+            </div>
+          </a>
+        </div>
+      </section>
+
+      <!-- ── DevOps & Management ── -->
+      <section class="category cat-devops">
+        <div class="cat-header">
+          <div class="cat-pip"></div>
+          <span class="cat-label">DevOps &amp; Management</span>
+          <div class="cat-rule"></div>
+        </div>
+        <div class="grid">
+          <a class="card" href="https://jenkins.example.com" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Jenkins</div>
+              <div class="card-url">jenkins.example.com</div>
+            </div>
+          </a>
+          <a class="card" href="https://guacamole.example.com" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Guacamole</div>
+              <div class="card-url">guacamole.example.com</div>
+            </div>
+          </a>
+          <a class="card" href="https://10.20.120.32" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">NetBox</div>
+              <div class="card-url">10.20.120.32</div>
+            </div>
+          </a>
+        </div>
+      </section>
+
+      <!-- ── External ── -->
+      <section class="category cat-external">
+        <div class="cat-header">
+          <div class="cat-pip"></div>
+          <span class="cat-label">External</span>
+          <div class="cat-rule"></div>
+        </div>
+        <div class="grid">
+          <a class="card" href="https://example.com" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">Portfolio</div>
+              <div class="card-url">example.com</div>
+            </div>
+          </a>
+          <a class="card" href="https://github.com" target="_blank">
+            <div class="card-inner">
+              <div class="card-name">GitHub</div>
+              <div class="card-url">github.com</div>
+            </div>
+          </a>
+        </div>
+      </section>
+
+      <footer>
+        <span>THALES · thales.internal</span>
+        <span>* port assumed — verify on host</span>
+      </footer>
+
+    </div>
+
+    <script>
+      function tick() {
+        const now  = new Date();
+        const pad  = n => String(n).padStart(2, '0');
+        const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+        const mos  = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+        document.getElementById('clock').textContent =
+          `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+        document.getElementById('dateline').textContent =
+          `${days[now.getDay()]} · ${mos[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+      }
+      tick();
+      setInterval(tick, 1000);
+    </script>
+    </body>
+    </html>
+kind: ConfigMap
+metadata:
+  name: homepage-html
+  namespace: internal
+---
+apiVersion: v1
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        root /usr/share/nginx/html;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ =404;
+        }
+
+        location = /favicon.ico {
+            log_not_found off;
+            access_log off;
+        }
+    }
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: internal

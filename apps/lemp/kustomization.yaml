@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: lemp
+resources:
+  - namespace.yaml
+  - mariadb-deployment.yaml
+  - mariadb-service.yaml
+  - web-app-deployment.yaml
+  - dashboard-service.yaml
+  - nginx-configmap.yaml
+  - mysqld-exporter.yaml
+  - dashboard-configmap.yaml
+  - pvcs.yaml
+  - db-backup.yaml
+  - eso-lemp-serviceaccount.yaml
+  - eso-lemp-secretstore.yaml
+  - eso-lemp-externalsecret.yaml
+  - nginx-dashboard-config.yaml

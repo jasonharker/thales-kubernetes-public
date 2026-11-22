@@ -1,0 +1,83 @@
+# Two replicas. Brought up at one first, deliberately: these pods register as
+# additional connectors on the SAME tunnel as CT 103, so Cloudflare load-balances
+# live traffic across them the moment they connect — there is no deploy-then-verify
+# gap, and a bad config produces partial failures rather than none.
+#
+# Verified at one replica on August 19, 2026 before scaling: 48 probes across all
+# six hostnames, all correct, and the connector's own counters read 48 requests /
+# 0 errors — so every probe was served by this path, not by CT 103.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    secret.reloader.stakater.com/auto: "true"
+    # cloudflared reads config.yaml only at start; without this a new hostname waits for a restart.
+    configmap.reloader.stakater.com/reload: cloudflared
+  name: cloudflared
+  namespace: cloudflared
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared
+        app: cloudflared
+    spec:
+      # keep replicas off the same node once scaled up
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: cloudflared
+      containers:
+        - name: cloudflared
+          # CT 103 runs X.Y.Z, which cloudflared itself reports as outdated.
+          # Pinned to a current release rather than mirroring what was installed there.
+          image: cloudflare/cloudflared
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config/config.yaml
+            - run
+          ports:
+            - name: metrics
+              containerPort: 2000
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config
+              readOnly: true
+            - name: creds
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: cloudflared
+        - name: creds
+          secret:
+            secretName: cloudflared-creds

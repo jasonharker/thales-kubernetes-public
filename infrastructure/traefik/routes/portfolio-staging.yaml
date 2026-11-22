@@ -1,0 +1,24 @@
+# staging.thales.internal -- the new portfolio in portfolio-staging, internal only.
+#
+# Backend is `portfolio`, the apex Service Flagger generates and keeps pointed at
+# portfolio-primary; it does not exist until Flagger initialises the Canary, and Traefik
+# logs this route as unresolved until then. Needs an AD A record on timaeus -> 10.20.130.100.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: portfolio-staging
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`staging.thales.internal`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+      services:
+        - name: portfolio
+          namespace: portfolio-staging
+          port: 80

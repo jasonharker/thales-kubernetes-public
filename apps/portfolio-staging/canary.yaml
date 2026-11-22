@@ -1,0 +1,54 @@
+# Blue/green (kubernetes provider): `iterations` with no stepWeight is what makes this
+# blue/green rather than canary. On an image change Flagger scales up the new version
+# behind portfolio-canary, runs the pre-rollout gates once, then the rollout webhook every
+# interval; `threshold` failures roll back, otherwise portfolio-primary is updated and the
+# apex Service (what Traefik routes to) keeps pointing at it.
+#
+# Gates, all run from the loadtester in this namespace:
+#   healthz  -- the image carries this site's nginx.conf, not a stock one
+#   content  -- the build rendered the site, not an empty dist/
+#   pages    -- every iteration, the key routes still answer 200
+#
+# Watch: kubectl -n portfolio-staging get canary portfolio -w
+---
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: portfolio
+  namespace: portfolio-staging
+spec:
+  provider: kubernetes
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: portfolio
+  progressDeadlineSeconds: 300
+  service:
+    port: 80
+    targetPort: 8080
+  analysis:
+    interval: 30s
+    threshold: 2
+    iterations: 4
+    webhooks:
+      - name: healthz
+        type: pre-rollout
+        url: http://flagger-loadtester.portfolio-staging/
+        timeout: 15s
+        metadata:
+          type: cmd
+          cmd: "curl -sf http://portfolio-canary.portfolio-staging/healthz"
+      - name: content
+        type: pre-rollout
+        url: http://flagger-loadtester.portfolio-staging/
+        timeout: 15s
+        metadata:
+          type: cmd
+          cmd: "curl -sf http://portfolio-canary.portfolio-staging/ | grep -q 'Jason Harker'"
+      - name: pages
+        type: rollout
+        url: http://flagger-loadtester.portfolio-staging/
+        timeout: 15s
+        metadata:
+          type: cmd
+          cmd: "for p in / /incidents/ /gitops/ /documentation/ /resume/; do curl -sf -o /dev/null http://portfolio-canary.portfolio-staging$p || exit 1; done"

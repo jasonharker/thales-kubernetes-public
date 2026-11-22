@@ -1,0 +1,27 @@
+# kubecost.thales.internal -- internal only.
+#
+# No authentik-forwardauth: kubecost's free tier has no user model at all, so the
+# lan-only middleware is the only access control on it. That is the same posture as
+# the Traefik dashboard, and it means anyone on a THALES VLAN can read cluster cost
+# data. Add forward-auth here if that stops being acceptable.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kubecost
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`kubecost.thales.internal`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: security-headers
+          namespace: traefik
+      services:
+        - name: kubecost-cost-analyzer
+          namespace: kubecost
+          port: 9090

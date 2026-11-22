@@ -1,0 +1,17 @@
+# city-pulse -- public Las Vegas place history at citypulse.example.com.
+# Source: github.com/jasonharker/city-pulse. One Go binary, three roles:
+#   serve.yaml    the site (2 replicas) and /metrics
+#   nightly.yaml  `citypulse nightly`: fetch all four agency datasets, then rebuild
+#                 places/businesses; the only pods with world egress
+#   postgres.yaml the database (pg_trgm), backup.yaml its nightly pg_dump
+# Jenkins rewrites the two `# city-pulse-image` lines on every green main build.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: city-pulse
+resources:
+  - namespace.yaml
+  - eso.yaml
+  - postgres.yaml
+  - backup.yaml
+  - serve.yaml
+  - nightly.yaml

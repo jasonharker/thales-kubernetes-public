@@ -1,0 +1,62 @@
+# Staging target for the Flagger Canary in canary.yaml. Flagger clones this into
+# portfolio-primary (which serves traffic) and scales this Deployment to zero between
+# rollouts, so:
+#   - no `replicas:` field -- Flux would otherwise fight Flagger's scale-to-zero on every
+#     reconcile and restart the canary pods;
+#   - no Service here -- Flagger generates portfolio, portfolio-primary, portfolio-canary.
+#
+# Jenkins (jasonharker/portfolio) rewrites the image line by its `# portfolio-image`
+# marker. The first image is stock nginx-unprivileged so Flagger can initialise a primary
+# before any portfolio build exists; the first real build is then a full blue/green run.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio
+  namespace: portfolio-staging
+spec:
+  selector:
+    matchLabels:
+      app: portfolio
+  template:
+    metadata:
+      labels:
+        app: portfolio
+        app.kubernetes.io/name: portfolio
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: 10.20.120.31:5000/portfolio:d9965878 # portfolio-image
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

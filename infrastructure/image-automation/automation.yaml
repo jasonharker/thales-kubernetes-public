@@ -1,0 +1,45 @@
+# Its own GitRepository because ImageUpdateAutomation pushes with its source's key, and this
+# one has write access. Everything else keeps reading through git-ssh-credentials.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: image-automation
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: ssh://git@github.com/jasonharker/thales-kubernetes
+  ref:
+    branch: main
+  secretRef:
+    name: image-automation-git
+---
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  name: media
+  namespace: flux-system
+spec:
+  suspend: false
+  interval: 30m
+  sourceRef:
+    kind: GitRepository
+    name: image-automation
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        name: flux-image-automation
+        email: flux-image-automation@users.noreply.github.com
+      messageTemplate: |
+        media: update images
+
+        {{ range .Changed.Changes -}}
+        {{ .OldValue }} -> {{ .NewValue }}
+        {{ end -}}
+    push:
+      branch: main
+  update:
+    path: ./apps/media
+    strategy: Setters

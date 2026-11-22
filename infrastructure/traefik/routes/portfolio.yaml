@@ -1,0 +1,24 @@
+# example.com and portfolio.thales.internal — the Astro portfolio (namespace portfolio),
+# production. Backend is the apex Service Flagger keeps pointed at portfolio-primary, so a
+# release reaches the public only after it passes blue/green here (it already passed it
+# in portfolio-staging). The LEMP site that held the apex is at thales.example.com
+# (routes/archive.yaml) since 2026-09-30.
+#
+# No middlewares: a static site with no forms, login or private paths. If one is ever
+# added, put the protection on a rule that lists BOTH hosts (see archive.yaml's header).
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: portfolio
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`example.com`) || Host(`portfolio.thales.internal`)
+      kind: Rule
+      services:
+        - name: portfolio
+          namespace: portfolio
+          port: 80

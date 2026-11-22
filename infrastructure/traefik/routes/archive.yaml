@@ -1,0 +1,60 @@
+# thales.example.com and testing.example.com — the LEMP portfolio (namespace lemp). Ported from
+# /etc/traefik/dynamic/portfolio.yaml on CT 103; it served example.com until
+# 2026-09-13, when the new site took the apex (routes/portfolio.yaml) and this moved to
+# the testing hostname, replacing its old 301 to the apex. Public only, via cloudflared;
+# portfolio.thales.internal now belongs to the new site.
+#
+# 2026-09-14: the apex is back on this site while the new one is developed on
+# staging; routes/portfolio.yaml keeps only its internal name.
+#
+# 2026-09-30: the new site took the apex for good (routes/portfolio.yaml); this one moved
+# to thales.example.com.
+#
+# ⚠️ EVERY HOST THIS ROUTE SERVES MUST APPEAR ON EVERY PROTECTED RULE. Adding
+# portfolio.thales.internal to the priority-5 catch-all alone made /network serve 200
+# unauthenticated on the internal name while example.com/network still 302'd to
+# Authentik — the protection was attached to the *rule*, and the new host only
+# matched the unprotected one. Caught by testing both names, Aug 22, 2026. Same
+# shape as the guacamole-internal provider trap: an internal alias is a way around
+# any control not mirrored onto it.
+#
+# ⚠️ PRIORITY ORDER IS LOAD-BEARING. Routes overlapping on the same Host are
+# separated only by priority. Traefik's default priority is the rule's *length*, so
+# leaving any of these implicit would reorder them silently. All are explicit, and
+# they keep the LXC's numbers so the two configs can be diffed by eye.
+#
+#   15  POST /guestbook.php      → lemp + rate limit
+#    5  everything else          → lemp
+#
+# The forward-auth-protected /network route (priority 10) was removed 2026-09-13 with
+# the page itself: the Authentik demo's network diagram no longer matched THALES.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: archive
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    # 3 POSTs/min per client IP on the guestbook form. A GET to the same path
+    # deliberately falls through to the root route, unthrottled.
+    - match: (Host(`thales.example.com`) || Host(`testing.example.com`)) && Path(`/guestbook.php`) && Method(`POST`)
+      kind: Rule
+      priority: 15
+      middlewares:
+        - name: guestbook-post-limit
+          namespace: traefik
+      services:
+        - name: dashboard
+          namespace: lemp
+          port: 80
+
+    - match: Host(`thales.example.com`) || Host(`testing.example.com`)
+      kind: Rule
+      priority: 5
+      services:
+        - name: dashboard
+          namespace: lemp
+          port: 80

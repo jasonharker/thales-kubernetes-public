@@ -1,0 +1,114 @@
+# WAN watchdog: ICMP probes to two external anchors (Cloudflare, Google)
+# from inside the cluster, so a stuck/dropping WAN link (the apartment
+# router/ISP path) shows up as an alert instead of only being noticed
+# when something like Navidrome visibly misbehaves.
+# Uses blackbox_exporter's built-in default config (icmp module ships
+# in the image) — no ConfigMap needed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+  labels:
+    app: blackbox-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: blackbox-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: blackbox-exporter
+        app: blackbox-exporter
+    spec:
+      containers:
+        - name: blackbox-exporter
+          image: quay.io/prometheus/blackbox-exporter
+          ports:
+            - name: http
+              containerPort: 9115
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_RAW"] # required to open a raw socket for the icmp module
+          readinessProbe:
+            tcpSocket:
+              port: 9115
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 50Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: blackbox-exporter
+  namespace: monitoring
+  labels:
+    app: blackbox-exporter
+spec:
+  ports:
+    - name: http
+      port: 9115
+      targetPort: 9115
+  selector:
+    app: blackbox-exporter
+---
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: wan-icmp
+  namespace: monitoring
+  labels:
+    release: prometheus # matches Prometheus's probeSelector
+spec:
+  jobName: wan-icmp
+  interval: 30s
+  module: icmp
+  prober:
+    url: blackbox-exporter.monitoring.svc:9115
+  targets:
+    staticConfig:
+      static:
+        - 1.1.1.1
+        - 8.8.8.8
+      labels:
+        watchdog: apt-router
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: wan-watchdog
+  namespace: monitoring
+  labels:
+    release: prometheus # matches Prometheus's ruleSelector
+spec:
+  groups:
+    - name: wan-watchdog
+      rules:
+        - alert: WANProbeFailing
+          expr: probe_success{job="wan-icmp"} == 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "WAN ICMP probe to {{ $labels.instance }} failing"
+            description: "blackbox-exporter has been unable to reach {{ $labels.instance }} for 2m+ — apartment router/ISP link is likely down or dropping packets."
+        - alert: WANHighPacketLoss
+          # avg_success over the icmp probe's own retry window as a loss-rate proxy
+          expr: avg_over_time(probe_success{job="wan-icmp"}[5m]) < 0.8
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "WAN packet loss to {{ $labels.instance }}"
+            description: "Less than 80% of ICMP probes to {{ $labels.instance }} succeeded over the last 5m — matches the 'stuck/slow streaming' symptom pattern."

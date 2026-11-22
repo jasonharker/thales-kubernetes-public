@@ -1,0 +1,12 @@
+---
+# v2, NOT v2alpha1 — promoted in Cilium 1.20. Verified against the live CRD on
+# 2026-08-21: v2 is served+storage, v2alpha1 still served but not storage.
+# The L2 policy alongside this is still v2alpha1; the two genuinely differ.
+apiVersion: cilium.io/v2
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: thales-pool
+spec:
+  blocks:
+    - start: "10.20.130.100"
+      stop: "10.20.130.149"

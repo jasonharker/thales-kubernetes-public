@@ -1,0 +1,67 @@
+# Ported from /etc/cloudflared/config.yml on CT 103, corrected against the live tunnel.
+#
+# ⚠️ httpHostHeader is MANDATORY on every entry, not decoration. The origin is one
+# ClusterIP serving every hostname and Traefik selects routes by Host(). Without it
+# the origin request carries the *service* name, matches no IngressRoute, and returns
+# 404 for every hostname at once.
+#
+# Six hostnames at the time of the port, not the four the migration plan listed
+# (nextcloud was added later). example.com and grafana
+# were simply missing from it. Four further hostnames in the LXC config are dead and
+# deliberately not carried over — thales (no Traefik router at all), mail (NodePort
+# 30723 does not exist), trading (30800 likewise) and ws.trading (30082, and the only
+# entry that dialled a node directly rather than going through Traefik).
+#
+# noTLSVerify on the LXC's jenkins entry is not carried over: it applies to TLS
+# origins and this origin is plain HTTP.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared
+  namespace: cloudflared
+data:
+  config.yaml: |
+    tunnel: 00000000-0000-0000-0000-000000000000
+    credentials-file: /etc/cloudflared/creds/creds.json
+    protocol: http2
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    ingress:
+      - hostname: example.com
+        service: http://traefik.traefik.svc.cluster.local:80
+        originRequest:
+          httpHostHeader: example.com
+      - hostname: thales.example.com
+        service: http://traefik.traefik.svc.cluster.local:80
+        originRequest:
+          httpHostHeader: thales.example.com
+      - hostname: testing.example.com
+        service: http://traefik.traefik.svc.cluster.local:80
+        originRequest:
+          httpHostHeader: testing.example.com
+      - hostname: grafana.example.com
+        service: http://traefik.traefik.svc.cluster.local:80
+        originRequest:
+          httpHostHeader: grafana.example.com
+      - hostname: guacamole.example.com
+        service: http://traefik.traefik.svc.cluster.local:80
+        originRequest:
+          httpHostHeader: guacamole.example.com
+      - hostname: jenkins.example.com
+        service: http://traefik.traefik.svc.cluster.local:80
+        originRequest:
+          httpHostHeader: jenkins.example.com
+      - hostname: authentik.example.com
+        service: http://traefik.traefik.svc.cluster.local:80
+        originRequest:
+          httpHostHeader: authentik.example.com
+      - hostname: nextcloud.example.com
+        service: http://traefik.traefik.svc.cluster.local:80
+        originRequest:
+          httpHostHeader: nextcloud.example.com
+      - hostname: citypulse.example.com
+        service: http://traefik.traefik.svc.cluster.local:80
+        originRequest:
+          httpHostHeader: citypulse.example.com
+      - service: http_status:404

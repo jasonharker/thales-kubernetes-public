@@ -1,0 +1,48 @@
+# KV v2, single-node Raft storage, no PKI (AD CS on gorgias covers that).
+# Kubernetes auth is live: each app gets its own policy, role, ServiceAccount and
+# ESO SecretStore, with the TokenReview JWT from auth-reviewer-secret.yaml. Apps
+# move off SOPS/age one at a time (roadmap SEC-01). Vault's own root token/unseal
+# keys can't live inside Vault, so SOPS/age stays for the bootstrap secrets.
+#
+# injector.enabled: false — ESO syncs Secrets; nothing uses the Agent Injector.
+#
+# server.ha.raft.enabled with replicas: 1 — starts on integrated Raft (rather
+# than the legacy "file" backend) so growing to a 3-node HA cluster later is a
+# replica-count change, not a storage migration. The chart's default raft.config
+# HCL (listener + `storage "raft"` + service_registration) is used as-is.
+#
+# global.tlsDisable: true — plaintext internal listener, matching every other
+# internal THALES service's trust model (TLS terminates at Cloudflare/Traefik,
+# not per-pod). No cert-manager is deployed; pod-to-pod encryption is roadmap
+# MESH-01 (Cilium WireGuard). Revisit if that changes.
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: vault
+  namespace: vault
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: vault
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: hashicorp
+  values:
+    global:
+      tlsDisable: true
+    injector:
+      enabled: false
+    server:
+      ui:
+        enabled: true
+      dataStorage:
+        enabled: true
+        storageClass: ceph-rbd
+      ha:
+        enabled: true
+        replicas: 1
+        raft:
+          enabled: true

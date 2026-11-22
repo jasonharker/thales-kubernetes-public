@@ -1,0 +1,28 @@
+# *.apps.thales.internal wildcard for Backstage tenants (<name>.apps.thales.internal), issued by
+# THALES-Root-CA (gorgias) from a CSR generated on hippodamus. *.thales.internal does not
+# cover a second label, hence a separate certificate. Renewal is manual, as for
+# wildcard-tls: new CSR, sign on gorgias, `vault kv put secret/traefik/wildcard-apps-tls`.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: wildcard-apps-thales-local-tls
+  namespace: traefik
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-traefik
+    kind: SecretStore
+  target:
+    name: wildcard-apps-thales-local-tls
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/tls
+  data:
+    - secretKey: tls.crt
+      remoteRef:
+        key: traefik/wildcard-apps-tls
+        property: tls.crt
+    - secretKey: tls.key
+      remoteRef:
+        key: traefik/wildcard-apps-tls
+        property: tls.key

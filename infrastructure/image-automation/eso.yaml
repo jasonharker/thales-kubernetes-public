@@ -1,0 +1,41 @@
+# Write key for image automation only. See infrastructure/external-secrets/ for the pattern.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eso-flux-system
+  namespace: flux-system
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: vault-flux-system
+  namespace: flux-system
+spec:
+  provider:
+    vault:
+      server: http://vault.vault.svc:8200
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: flux-system
+          serviceAccountRef:
+            name: eso-flux-system
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: image-automation-git
+  namespace: flux-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-flux-system
+    kind: SecretStore
+  target:
+    name: image-automation-git
+    creationPolicy: Owner
+  dataFrom:
+    - extract:
+        key: flux-system/image-automation-git

@@ -1,0 +1,39 @@
+# Roadmap follow-on to Vault (Longer-Term #2, deployed August 22, 2026): the
+# missing link that lets Flux-applied manifests actually consume Vault KV
+# values instead of SOPS/age ciphertext. ESO reads Vault and materializes an
+# ordinary Kubernetes Secret; consuming Deployments are unchanged.
+#
+# Default values only — installCRDs: true is the chart default (SecretStore/
+# ExternalSecret/ClusterSecretStore/ClusterExternalSecret CRDs all installed).
+# No ClusterSecretStore is used anywhere in THALES: every app gets its own
+# namespaced SecretStore + Vault role + policy, scoped to that app's KV path
+# only, per the per-app-least-privilege design chosen for the Grafana pilot.
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: external-secrets
+  namespace: external-secrets
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: external-secrets
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: external-secrets
+  values:
+    livenessProbe:
+      enabled: true
+    readinessProbe:
+      enabled: true
+    resources: &limits
+      requests:
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+    certController:
+      resources: *limits
+    webhook:
+      resources: *limits

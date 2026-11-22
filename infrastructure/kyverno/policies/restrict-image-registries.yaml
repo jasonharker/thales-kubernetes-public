@@ -1,0 +1,37 @@
+# Policy 5. Allows the registries in use today, including index.docker.io, which Knative
+# writes when it resolves a tag to a digest. An image with no registry host, such as
+# an image like `busybox`, resolves to Docker Hub, so the first regex lets short names through: a
+# leading path segment only counts as a registry if it contains a dot or a colon.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-image-registries
+spec:
+  validationActions:
+    - Deny
+  failurePolicy: Ignore
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  autogen:
+    podControllers:
+      controllers:
+        - deployments
+        - daemonsets
+        - statefulsets
+        - jobs
+        - cronjobs
+  variables:
+    - name: allContainers
+      expression: >-
+        object.spec.containers + object.spec.?initContainers.orValue([]) +
+        object.spec.?ephemeralContainers.orValue([])
+  validations:
+    - expression: >-
+        variables.allContainers.all(c,
+        !c.image.matches('^[^/]*[.:][^/]*/') ||
+        c.image.matches('^(docker\\.io|index\\.docker\\.io|quay\\.io|ghcr\\.io|lscr\\.io|gcr\\.io|icr\\.io|registry\\.k8s\\.io|reg\\.kyverno\\.io|10\\.10\\.20\\.31:5000)/'))
+      message: Image registry is not on the allowlist.

@@ -1,0 +1,51 @@
+# OBS-05. Controller metrics come from the PodMonitor. Per-object state comes from
+# gotk_resource_info, which kube-state-metrics builds from the Flux CRDs (see
+# customResourceState in infrastructure/helm/kube-prometheus-stack.yaml). The controllers
+# stopped exporting per-object Ready conditions themselves, so this is the only source for it.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: flux-system
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - flux-system
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: flux
+  podMetricsEndpoints:
+    - port: http-prom
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: flux
+  namespace: monitoring
+  labels:
+    release: prometheus # matches Prometheus's ruleSelector
+spec:
+  groups:
+    - name: flux
+      rules:
+        - alert: FluxResourceNotReady
+          expr: gotk_resource_info{ready!="True",suspended!="true"} == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.customresource_kind }} {{ $labels.exported_namespace }}/{{ $labels.name }} is not Ready"
+            description: >-
+              Flux has stopped applying this object, so git and the cluster may be drifting.
+              For image automation this also means updates have stopped. Check
+              kubectl -n {{ $labels.exported_namespace }} describe {{ $labels.customresource_kind }} {{ $labels.name }}.
+        - alert: FluxMetricsMissing
+          expr: absent(gotk_resource_info)
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "kube-state-metrics is not exporting Flux object state"
+            description: >-
+              FluxResourceNotReady cannot fire without gotk_resource_info. Check the
+              kube-state-metrics logs for a custom resource state config or RBAC error.

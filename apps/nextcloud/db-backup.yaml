@@ -1,0 +1,69 @@
+# Logical pg_dump to a PVC, the consistent copy of the database. Each app owns its own dump
+# CronJob; volumes are covered separately by k8s-rbd-backup (SSOT, Configuration Details).
+#
+# Image is postgres:16-alpine, matching the server major. A 15 client refuses to
+# dump a 16 server ("server version mismatch"), which is why this does not simply
+# copy guacamole's postgres:15-alpine.
+#
+# 01:10, staying clear of guacamole's 00:40 slot.
+#
+# This covers the database only. The user files on nextcloud-data-rbd are in the nightly
+# k8s-rbd-backup run to PBS.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: nextcloud
+spec:
+  schedule: "10 1 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: postgres-backup
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pg-dump
+              image: postgres
+              env:
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: nextcloud-secret
+                      key: POSTGRES_USER
+                - name: POSTGRES_DB
+                  valueFrom:
+                    secretKeyRef:
+                      name: nextcloud-secret
+                      key: POSTGRES_DB
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: nextcloud-secret
+                      key: POSTGRES_PASSWORD
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  pg_dump -Fc -Z6 -h postgres -U "$POSTGRES_USER" -f /backups/nextcloud-$(date +%F).dump "$POSTGRES_DB"
+                  find /backups -name "*.dump" -mtime +7 -delete
+                  ls -lh /backups
+              resources:
+                requests:
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+              volumeMounts:
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: backups
+              persistentVolumeClaim:
+                claimName: db-backups-rbd

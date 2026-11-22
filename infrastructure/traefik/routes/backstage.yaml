@@ -1,0 +1,22 @@
+# backstage.thales.internal -- Backstage (namespace backstage). LAN only, no forward-auth:
+# Backstage signs users in itself through Authentik OIDC. Use https:// -- the OAuth
+# redirect URI is registered for https only.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: backstage
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`backstage.thales.internal`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+      services:
+        - name: backstage
+          namespace: backstage
+          port: 80

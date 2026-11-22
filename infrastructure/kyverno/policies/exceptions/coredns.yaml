@@ -1,0 +1,16 @@
+# Talos owns the CoreDNS Deployment and would revert a label added here.
+#
+# Matches namespace plus ServiceAccount; see ceph-csi-nodeplugin.yaml.
+apiVersion: policies.kyverno.io/v1
+kind: PolicyException
+metadata:
+  name: coredns
+  namespace: kyverno
+spec:
+  policyRefs:
+    - name: require-name-label
+      kind: ValidatingPolicy
+  matchConditions:
+    - name: coredns-serviceaccount
+      expression: >-
+        object.metadata.namespace == 'kube-system' && object.spec.serviceAccountName == 'coredns'

@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    secret.reloader.stakater.com/auto: "true"
+  labels:
+    app: proxmox-exporter
+  name: proxmox-exporter
+  namespace: monitoring
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: proxmox-exporter
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: proxmox-exporter
+        app: proxmox-exporter
+    spec:
+      containers:
+      - args:
+        - --config.file=/etc/pve.yml
+        - --web.listen-address=:9221
+        image: prompve/prometheus-pve-exporter
+        imagePullPolicy: Always
+        name: proxmox-exporter
+        ports:
+        - containerPort: 9221
+          name: metrics
+          protocol: TCP
+        readinessProbe:
+          tcpSocket:
+            port: 9221
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 6
+        resources:
+          requests:
+            cpu: 60m
+            memory: 64Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /etc/pve.yml
+          name: config
+          subPath: config.yml
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: config
+        secret:
+          defaultMode: 420
+          secretName: proxmox-credentials
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: proxmox-exporter
+  name: proxmox-exporter
+  namespace: monitoring
+spec:
+  ports:
+  - name: metrics
+    port: 9221
+    protocol: TCP
+    targetPort: 9221
+  selector:
+    app: proxmox-exporter
+  type: ClusterIP
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  labels:
+    release: prometheus
+  name: proxmox-exporter
+  namespace: monitoring
+spec:
+  endpoints:
+  - interval: 30s
+    params:
+      module:
+      - default
+      target:
+      - 10.20.110.11
+      - 10.20.110.12
+      - 10.20.110.13
+    path: /pve
+    port: metrics
+    relabelings:
+    - action: replace
+      sourceLabels:
+      - __param_target
+      targetLabel: instance
+    - action: replace
+      replacement: proxmox-exporter.monitoring.svc.cluster.local:9221
+      targetLabel: __address__
+  selector:
+    matchLabels:
+      app: proxmox-exporter

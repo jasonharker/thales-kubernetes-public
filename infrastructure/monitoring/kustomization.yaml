@@ -1,0 +1,43 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - snmp-exporter-deployment.yaml
+  - eso-monitoring-exporters-serviceaccount.yaml
+  - eso-monitoring-exporters-secretstore.yaml
+  - eso-monitoring-exporters-externalsecret.yaml
+  - external-vms-endpoints.yaml
+  - infrastructure-lxcs.yaml
+  - eso-grafana-serviceaccount.yaml
+  - eso-grafana-secretstore.yaml
+  - eso-grafana-externalsecret.yaml
+  - eso-alertmanager-serviceaccount.yaml
+  - eso-alertmanager-secretstore.yaml
+  - eso-alertmanager-externalsecret.yaml
+  - grafana-pvc-rbd.yaml
+  - grafana-deployment.yaml
+  - grafana-service.yaml
+  - proxmox-exporter.yaml
+  - ceph-mgr-metrics.yaml
+  - technitium-exporter.yaml
+  - grafana-config.yaml
+  - grafana-dashboard-provider.yaml
+  - grafana-datasources.yaml
+  - external-vms.yaml
+  - snmp-exporter.yaml
+  - blackbox-exporter.yaml
+  - vault-health.yaml
+  - traefik-podmonitor.yaml
+  - network-policy-alerts.yaml
+  - city-pulse-alerts.yaml
+  - kyverno-alerts.yaml
+  - flux.yaml
+  - jaeger-pvc-rbd.yaml
+  - jaeger.yaml
+  - euthyna-reader.yaml
+configMapGenerator:
+  - name: grafana-dashboards
+    files:
+      - dashboards/thales-unified.json
+    options:
+      disableNameSuffixHash: true

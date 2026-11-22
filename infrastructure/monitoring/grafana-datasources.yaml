@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+data:
+  datasources.yaml: "apiVersion: 1\ndatasources:\n- name: Prometheus\n  type: prometheus\n\
+    \  access: proxy\n  url: http://prometheus-kube-prometheus-prometheus:9090\n \
+    \ isDefault: true\n- name: Loki\n  type: loki\n  access: proxy\n  url: http://loki-gateway\n\
+    \  isDefault: false\n  editable: true\n  jsonData:\n    maxLines: 1000\n- name: Jaeger\n  type: jaeger\n  access: proxy\n  url: http://jaeger:16686\n  isDefault: false\n"
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring

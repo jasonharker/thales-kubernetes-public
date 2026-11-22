@@ -1,0 +1,15 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hestia
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`hestia.thales.internal`)
+      kind: Rule
+      services:
+        - name: hestia
+          namespace: oracle
+          port: 80

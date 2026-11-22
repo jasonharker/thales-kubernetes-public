@@ -1,0 +1,464 @@
+{
+  "id": "thalesBrainDrft1",
+  "name": "THALES brain drift",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                0
+              ],
+              "triggerAtHour": 4,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Weekly schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "run-now",
+      "name": "Run now",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.github.com/repos/jasonharker/thales-docs/contents/THALES-SSOT.md",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw+json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "thales-brain-drift"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "get-ssot",
+      "name": "Get SSOT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesGithubSsot1",
+          "name": "github-ssot-read"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "PROPFIND",
+        "url": "https://nextcloud.example.com/remote.php/webdav/My%20vault/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "nextCloudApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Depth",
+              "value": "infinity"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "list-vault",
+      "name": "List vault",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "nextCloudApi": {
+          "id": "thalesNcBrain01",
+          "name": "nextcloud-brain"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ponytail: in-scope docs are fixed; add a path here to widen the audit\nconst VAULT = \"My vault\";\nreturn [\"Claude/Skills MOC.md\", \"Claude/Claude MOC.md\", \"Claude/INDEX.md\", \"02 - Personal IT/01 - Projects/Homelab/00-homelab-index.md\", \"Claude/memory/MEMORY.md\"].map(p => ({ json: { path: VAULT + '/' + p, rel: p } }));"
+      },
+      "id": "doc-paths",
+      "name": "Doc paths",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "file",
+        "operation": "download",
+        "path": "={{ $json.path }}",
+        "binaryPropertyName": "data"
+      },
+      "id": "download-docs",
+      "name": "Download docs",
+      "type": "n8n-nodes-base.nextCloud",
+      "typeVersion": 1,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "nextCloudApi": {
+          "id": "thalesNcBrain01",
+          "name": "nextcloud-brain"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "data",
+        "destinationKey": "data",
+        "options": {}
+      },
+      "id": "to-text",
+      "name": "Docs to text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// brain-drift mechanical checks. files: vault-relative paths (no trailing '/'); docs: {path: text}.\n// Returns [{doc, kind, detail}]. Pure \u2014 embedded verbatim in the n8n Code node.\nfunction brainDriftChecks(files, docs) {\n  const SKILLS_MOC = 'Claude/Skills MOC.md', CLAUDE_MOC = 'Claude/Claude MOC.md', INDEX = 'Claude/INDEX.md';\n  const HL = '02 - Personal IT/01 - Projects/Homelab/', HL_INDEX = HL + '00-homelab-index.md', MEM = 'Claude/memory/MEMORY.md';\n  const fileSet = new Set(files), lower = files.map(f => f.toLowerCase());\n  const dirOf = p => p.slice(0, p.lastIndexOf('/') + 1);\n  const norm = p => { const out = []; for (const s of p.split('/')) s === '..' ? out.pop() : (s && s !== '.' && out.push(s)); return out.join('/'); };\n  const findings = [];\n  const add = (doc, kind, detail) => findings.push({ doc, kind, detail });\n\n  // Obsidian resolution: exact path, else path-suffix, else basename; '.md' optional. Returns resolved path or null.\n  function resolveWiki(target) {\n    const t = target.toLowerCase(), cands = /\\.[a-z0-9]{1,5}$/.test(t) ? [t] : [t + '.md', t];\n    for (const c of cands) {\n      const i = lower.findIndex(f => f === c || f.endsWith('/' + c));\n      if (i >= 0) return files[i];\n    }\n    return null;\n  }\n  // every outgoing link of a doc, resolved: [{raw, path|null}]\n  function links(docPath) {\n    const text = (docs[docPath] || '').replace(/```[\\s\\S]*?```/g, '').replace(/`[^`\\n]*`/g, '');\n    const out = [];\n    for (const m of text.matchAll(/!?\\[\\[([^\\]|#^]*)[^\\]]*\\]\\]/g)) {\n      if (!m[1].trim()) continue; // [[#heading]] \u2014 same-file anchor\n      out.push({ raw: m[1].trim(), path: resolveWiki(m[1].trim()) });\n    }\n    for (const m of text.matchAll(/\\]\\(([^)\\s]+)\\)/g)) {\n      const href = m[1];\n      if (/^[a-z]+:|^#/i.test(href)) continue; // external URL or anchor\n      let p; try { p = decodeURIComponent(href.split('#')[0]); } catch (e) { p = href.split('#')[0]; }\n      const rel = norm(dirOf(docPath) + p);\n      out.push({ raw: href, path: fileSet.has(rel) ? rel : (fileSet.has(norm(p)) ? norm(p) : resolveWiki(p)) });\n    }\n    return out;\n  }\n\n  const linked = {};\n  for (const d of Object.keys(docs)) {\n    linked[d] = links(d);\n    for (const l of linked[d]) if (!l.path) add(d, 'broken link', l.raw);\n  }\n  const targets = d => new Set((linked[d] || []).map(l => l.path).filter(Boolean));\n\n  // Skills MOC: one entry per skill dir that has a SKILL.md (synced/ lives one level deeper, so it's excluded)\n  if (docs[SKILLS_MOC] !== undefined) {\n    const t = targets(SKILLS_MOC);\n    for (const f of files) if (/^Claude\\/skills\\/[^/]+\\/SKILL\\.md$/.test(f) && !t.has(f)) add(SKILLS_MOC, 'skill not listed', f.split('/')[2]);\n  }\n\n  // Claude MOC + INDEX together: top-level knowledge/identity notes and research topics, linked from at least one\n  if (docs[CLAUDE_MOC] !== undefined || docs[INDEX] !== undefined) {\n    const t = new Set([...targets(CLAUDE_MOC), ...targets(INDEX)]);\n    for (const f of files) if (/^Claude\\/(knowledge|identity|identity\\/odysseus)\\/[^/]+\\.md$/.test(f) && !t.has(f)) add(CLAUDE_MOC, 'not linked from Claude MOC or INDEX', f);\n    const topics = new Set(files.map(f => (f.match(/^(Claude\\/knowledge\\/research\\/[^/]+)\\//) || [])[1]).filter(Boolean));\n    for (const topic of topics) if (![...t].some(p => p.startsWith(topic + '/'))) add(CLAUDE_MOC, 'research topic not linked', topic);\n  }\n\n  // Homelab index: every Homelab/*.md and Homelab/docs/*.md\n  if (docs[HL_INDEX] !== undefined) {\n    const t = targets(HL_INDEX);\n    for (const f of files) {\n      if (f === HL_INDEX || !f.startsWith(HL) || !f.endsWith('.md')) continue;\n      const rest = f.slice(HL.length);\n      if ((!rest.includes('/') || /^docs\\/[^/]+$/.test(rest)) && !t.has(f)) add(HL_INDEX, 'note not in index', rest);\n    }\n  }\n\n  // MEMORY.md: every memory note indexed (broken index lines are already caught above as broken links)\n  if (docs[MEM] !== undefined) {\n    const t = targets(MEM);\n    for (const f of files) if (/^Claude\\/memory\\/[^/]+\\.md$/.test(f) && f !== MEM && !t.has(f)) add(MEM, 'memory note not indexed', f.split('/').pop());\n  }\n  return findings;\n}\n\n\nconst PREFIX = '/remote.php/webdav/' + \"My vault/\";\nconst dec = p => { try { return decodeURIComponent(p); } catch (e) { return p; } };\n// PROPFIND multistatus: collections' hrefs end in '/', files' don't\nconst xml = String($('List vault').first().json.data || '');\nconst files = [...xml.matchAll(/<d:href>([^<]+)<\\/d:href>/g)].map(m => dec(m[1]))\n  .filter(p => p.startsWith(PREFIX) && !p.endsWith('/')).map(p => p.slice(PREFIX.length));\nconst paths = $('Doc paths').all().map(i => i.json.rel);\nconst docs = {};\n$input.all().forEach((item, i) => { docs[paths[i]] = String(item.json.data || ''); });\nconst findings = brainDriftChecks(files, docs);\n// Nextcloud may refuse Depth:infinity and return one level; every check would then pass vacuously\nif (!files.some(f => f.includes('/'))) findings.unshift({ doc: '(listing)', kind: 'vault listing not recursive', detail: files.length + ' files, all top-level \u2014 checks unreliable' });\nconst memIndex = (docs['Claude/memory/MEMORY.md'] || '').split('\\n').filter(l => l.startsWith('- ['));\nconst ssot = String($('Get SSOT').first().json.data || '');\nreturn [{ json: { findings, fileCount: files.length, llmUser: ssot ? 'THALES-SSOT.md (authoritative):\\n\\n' + ssot + '\\n\\n---\\nMEMORY.md index lines:\\n\\n' + memIndex.join('\\n') : '' } }];"
+      },
+      "id": "checks",
+      "name": "Checks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'anthropic/claude-sonnet-5', max_tokens: 3000, temperature: 0, reasoning: { effort: 'low', exclude: true }, messages: [ { role: 'system', content: \"You audit an Obsidian memory index against THALES-SSOT.md, the authoritative current-state document for a homelab. Each index line summarises one memory note. Report ONLY lines that state something the SSOT directly contradicts (an IP, version, host, status, or a thing called missing/deferred/blocked that the SSOT shows as done, or the reverse). Do not report lines the SSOT is merely silent on, historical/incident context, or style. Quote the claim verbatim and the SSOT text verbatim; never paraphrase or invent. Reply with a JSON array and nothing else: [{\\\"file\\\": \\\"<note filename from the line's link>\\\", \\\"claim\\\": \\\"...\\\", \\\"ssot_says\\\": \\\"...\\\"}]. Reply [] when nothing contradicts.\" }, { role: 'user', content: $json.llmUser } ] }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesOpenRtr001",
+          "name": "OpenRouter"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c = $('Checks').first().json;\nconst findings = [...c.findings];\nlet llm = 'LLM check skipped (no SSOT or no OpenRouter reply)';\ntry {\n  const raw = $input.first().json.choices[0].message.content.trim().replace(/^```(?:json)?\\s*|\\s*```$/g, '');\n  const arr = JSON.parse(raw);\n  for (const x of arr) findings.push({ doc: 'Claude/memory/MEMORY.md', kind: 'contradicts SSOT', detail: `${x.file}: \"${x.claim}\" \u2014 SSOT: \"${x.ssot_says}\"` });\n  llm = `LLM check: ${arr.length} contradiction(s)`;\n} catch (e) {}\nconst date = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });\nconst rel = `Claude/_drift/brain-drift-${date}.md`;\nconst byDoc = {};\nfor (const f of findings) (byDoc[f.doc] ??= []).push(f);\nconst note = [\n  '---', 'type: drift-report', `created: ${date}`, 'source: n8n brain-drift (thalesBrainDrft1)', '---',\n  `# Brain drift \u2014 ${date}`, '',\n  `Proposals only \u2014 nothing was edited. ${c.fileCount} vault files scanned. ${llm}. Per [[ssot-over-memory]], the SSOT wins a contradiction. Delete this note once handled.`, '',\n  ...Object.entries(byDoc).flatMap(([doc, fs]) => [`## [[${doc.replace(/\\.md$/, '')}]]`, ...fs.map(f => `- [ ] **${f.kind}**: ${f.detail}`), '']),\n].join('\\n');\nconst message = findings.length\n  ? `**brain-drift**: ${findings.length} finding(s) \u2192 \\`${rel}\\` (${llm})`\n  : `**brain-drift**: clean \u2014 ${c.fileCount} files, 5 docs. ${llm}`;\nreturn [{ json: { count: findings.length, note, message, path: `_drift/brain-drift-${date}.md` } }];  // n8n-brain's /_drift share mount = My vault/Claude/_drift"
+      },
+      "id": "build-report",
+      "name": "Build report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has-findings",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "any-findings",
+      "name": "Any findings?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "accessToken",
+        "resource": "file",
+        "operation": "upload",
+        "path": "={{ $json.path }}",
+        "binaryDataUpload": false,
+        "fileContent": "={{ $json.note }}"
+      },
+      "id": "write-note",
+      "name": "Write drift note",
+      "type": "n8n-nodes-base.nextCloud",
+      "typeVersion": 1,
+      "position": [
+        2200,
+        300
+      ],
+      "credentials": {
+        "nextCloudApi": {
+          "id": "thalesNcBrain01",
+          "name": "nextcloud-brain"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "operation": "sendLegacy",
+        "content": "={{ $('Build report').first().json.message }}",
+        "options": {}
+      },
+      "id": "post-to-discord",
+      "name": "Post to Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        300
+      ],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "thalesDiscord001",
+          "name": "discord-triage"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Weekly schedule": {
+      "main": [
+        [
+          {
+            "node": "Get SSOT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now": {
+      "main": [
+        [
+          {
+            "node": "Get SSOT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get SSOT": {
+      "main": [
+        [
+          {
+            "node": "List vault",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List vault": {
+      "main": [
+        [
+          {
+            "node": "Doc paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Doc paths": {
+      "main": [
+        [
+          {
+            "node": "Download docs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download docs": {
+      "main": [
+        [
+          {
+            "node": "Docs to text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Docs to text": {
+      "main": [
+        [
+          {
+            "node": "Checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checks": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter": {
+      "main": [
+        [
+          {
+            "node": "Build report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build report": {
+      "main": [
+        [
+          {
+            "node": "Any findings?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write drift note": {
+      "main": [
+        [
+          {
+            "node": "Post to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any findings?": {
+      "main": [
+        [
+          {
+            "node": "Write drift note",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Post to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Los_Angeles"
+  },
+  "active": false
+}

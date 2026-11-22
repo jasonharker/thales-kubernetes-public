@@ -1,0 +1,10 @@
+# Install only. Policies and PolicyExceptions live under policies/ as a separate Flux
+# Kustomization -- they are Kyverno CRDs that this chart installs, so they cannot apply in
+# the same pass.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - limits.yaml
+  - repo.yaml
+  - helmrelease.yaml

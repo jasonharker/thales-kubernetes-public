@@ -1,0 +1,19 @@
+# Dashboards under infrastructure/monitoring/dashboards are provisioned from git, so UI
+# saves are refused: export the JSON and commit it instead. Dashboards not listed there
+# stay in Grafana's database on the PVC.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: monitoring
+data:
+  thales.yaml: |
+    apiVersion: 1
+    providers:
+      - name: thales
+        type: file
+        disableDeletion: true
+        allowUiUpdates: false
+        updateIntervalSeconds: 30
+        options:
+          path: /etc/grafana/dashboards

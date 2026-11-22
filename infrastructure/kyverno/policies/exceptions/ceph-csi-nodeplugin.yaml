@@ -1,0 +1,23 @@
+# The rbd nodeplugin maps block devices on the host, so it needs privileged containers,
+# hostNetwork and hostPID.
+#
+# Exceptions match on namespace plus ServiceAccount, never labels or pod names, which anyone
+# able to create a pod can set. The expression reads both the Pod and the DaemonSet shape
+# because the policies' autogen evaluates the DaemonSet too.
+apiVersion: policies.kyverno.io/v1
+kind: PolicyException
+metadata:
+  name: ceph-csi-nodeplugin
+  namespace: kyverno
+spec:
+  policyRefs:
+    - name: restrict-privileged
+      kind: ValidatingPolicy
+    - name: restrict-host-namespaces
+      kind: ValidatingPolicy
+  matchConditions:
+    - name: ceph-csi-nodeplugin-serviceaccount
+      expression: >-
+        object.metadata.namespace == 'ceph-csi' &&
+        (object.kind == 'Pod' ? object.spec.serviceAccountName : object.spec.template.spec.serviceAccountName)
+        == 'ceph-csi-rbd-nodeplugin'

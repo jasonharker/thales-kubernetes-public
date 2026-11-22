@@ -1,0 +1,36 @@
+# guacamole.example.com — ported from /etc/traefik/dynamic/guacamole.yml on CT 103.
+#
+# The full forward-auth stack, and the most complex route in the set. This one DOES
+# take authentik-forwardauth (unlike Authentik itself and Grafana, both of which
+# break under it — SSOT §6).
+#
+# The outpost callback route in ingressroute-outpost.yaml is what makes this work:
+# it matches /outpost.goauthentik.io on any Host at priority 100, so the auth
+# callback lands on Authentik rather than being swallowed by the catch-all below.
+# Without it this route redirect-loops.
+#
+# The middleware ref carries `namespace: traefik` explicitly. A cross-namespace ref
+# by name alone fails SILENTLY even with allowCrossNamespace: true — which on this
+# route would mean an unauthenticated Guacamole, not an error.
+#
+# Guacamole's tunnel is a WebSocket; Traefik proxies that transparently and the LXC
+# config carried nothing special for it either.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: guacamole
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`guacamole.thales.internal`) || Host(`guacamole.example.com`)
+      kind: Rule
+      middlewares:
+        - name: authentik-forwardauth
+          namespace: traefik
+      services:
+        - name: guacamole
+          namespace: guacamole
+          port: 8080

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: lemp
+  labels:
+    app: dashboard
+spec:
+  # ClusterIP since Aug 22, 2026. NodePort 30080 was the last LAN path to the
+  # portfolio; portfolio.thales.internal replaced it, so the port was removed and
+  # dropped from the pfSense K8S_NODEPORTS alias in the same window.
+  type: ClusterIP
+  # Live selector is app: web-app (fixed by kubectl edit after the original
+  # apply, whose last-applied annotation still says app: dashboard).
+  selector:
+    app: web-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP

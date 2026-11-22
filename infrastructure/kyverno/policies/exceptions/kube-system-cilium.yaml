@@ -1,0 +1,51 @@
+# Cilium is the CNI: the agent needs privileged containers, and the agent, Envoy and the operator
+# need host namespaces. Memory limits are left to the Helm values, which sit outside Flux.
+#
+# Matches namespace plus ServiceAccount; see ceph-csi-nodeplugin.yaml.
+apiVersion: policies.kyverno.io/v1
+kind: PolicyException
+metadata:
+  name: cilium-privileged
+  namespace: kyverno
+spec:
+  policyRefs:
+    - name: restrict-privileged
+      kind: ValidatingPolicy
+  matchConditions:
+    - name: cilium-serviceaccount
+      expression: >-
+        object.metadata.namespace == 'kube-system' &&
+        (object.kind == 'Pod' ? object.spec.serviceAccountName : object.spec.template.spec.serviceAccountName)
+        == 'cilium'
+---
+apiVersion: policies.kyverno.io/v1
+kind: PolicyException
+metadata:
+  name: cilium-host-namespaces
+  namespace: kyverno
+spec:
+  policyRefs:
+    - name: restrict-host-namespaces
+      kind: ValidatingPolicy
+  matchConditions:
+    - name: cilium-serviceaccounts
+      expression: >-
+        object.metadata.namespace == 'kube-system' &&
+        (object.kind == 'Pod' ? object.spec.serviceAccountName : object.spec.template.spec.serviceAccountName)
+        in ['cilium', 'cilium-envoy', 'cilium-operator']
+---
+apiVersion: policies.kyverno.io/v1
+kind: PolicyException
+metadata:
+  name: cilium-memory-limits
+  namespace: kyverno
+spec:
+  policyRefs:
+    - name: require-memory-limits
+      kind: ValidatingPolicy
+  matchConditions:
+    - name: cilium-serviceaccounts
+      expression: >-
+        object.metadata.namespace == 'kube-system' &&
+        (object.kind == 'Pod' ? object.spec.serviceAccountName : object.spec.template.spec.serviceAccountName)
+        in ['cilium-operator', 'hubble-relay', 'hubble-ui']

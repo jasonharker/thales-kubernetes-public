@@ -1,0 +1,72 @@
+# Ceph Phase 1 (September 2, 2026): RBD block storage for anaximander, backed
+# by the Proxmox-managed Ceph Squid cluster on thales-01/02/03.
+#
+# This is an EXTERNAL Ceph cluster. Rook is deliberately not used: the cluster
+# is owned and operated by Proxmox (pveceph), and Kubernetes is only a client.
+#
+# Monitors are addressed on VLAN 130 COMPUTE (10.20.130.13-.15), where the three
+# Proxmox nodes gained tagged vmbr0.30 interfaces so RBD traffic is L2-adjacent
+# to the Talos nodes and never hairpins through pfSense. Talos ships
+# CONFIG_BLK_DEV_RBD=y and CONFIG_CEPH_LIB=y built in, so no system extension
+# is needed on the nodes for krbd mapping.
+#
+# Cilium masquerades pod egress to the node IP, so provisioner pods reach the
+# mons as 10.20.130.21-.24; the nodeplugin is hostNetwork and reaches them
+# directly. Both are covered by the Ceph rules in each node host.fw.
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: ceph-csi-rbd
+  namespace: ceph-csi
+spec:
+  interval: 10m
+  # First install pulls quay.io/cephcsi/cephcsi (~400 MB) onto every node over
+  # 1 GbE, which overruns the 5m Flux default and fails the release even though
+  # the pods come up fine. 15m covers a cold pull across the whole cluster.
+  timeout: 15m
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  chart:
+    spec:
+      chart: ceph-csi-rbd
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: ceph-csi
+  values:
+    commonLabels:
+      app.kubernetes.io/name: ceph-csi-rbd
+    csiConfig:
+      - clusterID: 00000000-0000-0000-0000-000000000000
+        monitors:
+          - 10.20.130.13:3300
+          - 10.20.130.14:3300
+          - 10.20.130.15:3300
+    # The chart reuses nodeplugin.plugin.resources for csi-rbdplugin-controller and
+    # liveness-prometheus, in both the DaemonSet and the provisioner Deployment.
+    nodeplugin:
+      plugin:
+        resources:
+          requests:
+            memory: 64Mi
+          limits:
+            memory: 512Mi
+      registrar: &sidecar
+        resources:
+          requests:
+            memory: 32Mi
+          limits:
+            memory: 128Mi
+    provisioner:
+      replicaCount: 2
+      provisioner: *sidecar
+      attacher: *sidecar
+      resizer: *sidecar
+      snapshotter: *sidecar
+    storageClass:
+      create: false

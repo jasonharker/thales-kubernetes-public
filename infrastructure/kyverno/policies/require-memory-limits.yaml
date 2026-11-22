@@ -1,0 +1,33 @@
+# Policy 3. Memory only: CPU limits cause throttling, and memory is what has actually taken
+# nodes down (L#130).
+#
+# Pods only, no autogen, and that is load-bearing. LimitRange defaults are applied to Pods at
+# admission and never to Deployment templates, so an autogen rule would flag every workload
+# that relies on its namespace's defaults. Here LimitRange runs first, so this catches only
+# namespaces that have none. Denials therefore surface on the ReplicaSet, not in Flux.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-memory-limits
+spec:
+  validationActions:
+    - Deny
+  failurePolicy: Ignore
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  autogen:
+    podControllers:
+      controllers: []
+  variables:
+    - name: resourced
+      expression: object.spec.containers + object.spec.?initContainers.orValue([])
+  validations:
+    - expression: >-
+        variables.resourced.all(c,
+        'memory' in c.?resources.?limits.orValue({}) &&
+        'memory' in c.?resources.?requests.orValue({}))
+      message: Every container needs a memory request and limit.

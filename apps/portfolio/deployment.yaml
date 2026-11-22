@@ -1,0 +1,87 @@
+# Production target for the Flagger Canary in canary.yaml -- the same blue/green gates as
+# portfolio-staging. Flagger clones this into portfolio-primary (which serves traffic) and
+# scales this Deployment to zero between rollouts, so:
+#   - no `replicas:` field -- Flux would fight Flagger's scale-to-zero; the HPA below is the
+#     replica source instead (Flagger copies it to portfolio-primary's HPA, and uses its
+#     minReplicas when scaling this Deployment up for analysis);
+#   - no Service here -- Flagger owns portfolio, portfolio-primary and portfolio-canary. The
+#     apex Service predates the Canary and was adopted rather than recreated.
+#
+# The image line changes only by a promotion PR copying a tag that already passed
+# portfolio-staging (`kubectl -n portfolio-staging get canary portfolio` shows Succeeded,
+# and `get deploy portfolio-primary -o jsonpath='{..image}'` shows the tag); the merge then
+# runs a second blue/green analysis here. Jenkins never writes this file.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portfolio
+  namespace: portfolio
+spec:
+  selector:
+    matchLabels:
+      app: portfolio
+  template:
+    metadata:
+      labels:
+        app: portfolio
+        app.kubernetes.io/name: portfolio
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: 10.20.120.31:5000/portfolio:d9965878 # portfolio-image
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Floor of 2 replicas (what production has always had), scaling to 4 on CPU. min = max
+# kept KubeHpaMaxedOut firing permanently. Raise maxReplicas with the portfolio quota.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: portfolio
+  namespace: portfolio
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: portfolio
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80

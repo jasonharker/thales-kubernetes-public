@@ -1,0 +1,55 @@
+# Vault/ESO, the per-namespace pattern: read-only policy on secret/data/city-pulse/*,
+# Kubernetes-auth role city-pulse bound to this ServiceAccount, a namespaced SecretStore.
+#
+# The password goes into a postgres:// URL (serve.yaml, nightly.yaml), so keep it
+# URL-safe: letters and digits only.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eso-city-pulse
+  namespace: city-pulse
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: vault-city-pulse
+  namespace: city-pulse
+spec:
+  provider:
+    vault:
+      server: http://vault.vault.svc:8200
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: city-pulse
+          serviceAccountRef:
+            name: eso-city-pulse
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: postgres-secret
+  namespace: city-pulse
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-city-pulse
+    kind: SecretStore
+  target:
+    name: postgres-secret
+    creationPolicy: Owner
+  data:
+    - secretKey: POSTGRES_DB
+      remoteRef:
+        key: city-pulse/postgres
+        property: POSTGRES_DB
+    - secretKey: POSTGRES_USER
+      remoteRef:
+        key: city-pulse/postgres
+        property: POSTGRES_USER
+    - secretKey: POSTGRES_PASSWORD
+      remoteRef:
+        key: city-pulse/postgres
+        property: POSTGRES_PASSWORD

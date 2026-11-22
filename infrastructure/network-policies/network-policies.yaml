@@ -1,0 +1,802 @@
+# internal: first namespace under default-deny ingress (wave 1, 2026-09-08). Nothing here
+# selected any pod before this -- the cluster's only NetworkPolicies were Flux's own three,
+# so every namespace was open to every other one (K8S-05/NET-06).
+#
+# Shape used by every namespace in this file: select all pods on Ingress, allow all
+# same-namespace traffic, then name each observed caller. Same-namespace allow-all is
+# load-bearing, not laziness -- the nightly backup CronJob pods carry only a job-name=
+# label, so an app=-keyed policy denies their database connections at 00:30.
+#
+# CiliumNetworkPolicy rather than networking.k8s.io NetworkPolicy, and the reason is not
+# preference. This namespace is reached over NodePort 30100, and with
+# externalTrafficPolicy: Cluster every node except the one running the pod SNATs the
+# request to its own cilium_host router address (10.244.<node>.x). Those addresses carry
+# reserved:remote-node identity -- confirmed via `cilium-dbg ip list`, though Hubble
+# prints them as "(world)", which is misleading. cilium-config leaves
+# policy-cidr-match-mode unset, and CIDR rules do NOT match node identities, so an
+# ipBlock admits none of it however wide the mask: 10.0.0.0/8 was tried first and dropped
+# traffic from 4 of 5 nodes while the pod-local node (real client IP preserved, world
+# identity) returned 200. Stock NetworkPolicy has no way to express a node identity;
+# fromEntities is the only fix that does not require restarting the CNI.
+#
+# So: any namespace fronted by a NodePort or LoadBalancer, or receiving kube-apiserver
+# webhook calls, needs a CNP with fromEntities. Namespaces reached only through Traefik
+# are pod-sourced and plain NetworkPolicy covers them.
+#
+# Verify from a CLIENTS-VLAN host, never from hippodamus: pfSense blocks VLAN 120 -> VLAN 130
+# NodePorts outright, so every curl from there returns 000 whether the policy is right or
+# not, and reads as a policy failure when it is nothing of the kind.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: internal-allow-ingress
+  namespace: internal
+spec:
+  endpointSelector: {}
+  ingress:
+    # Same namespace.
+    - fromEndpoints:
+        - {}
+    # NodePort 30100. Reaching this pod from off-node needs all three identities, and the
+    # reason is worth keeping. With externalTrafficPolicy: Cluster every node except the
+    # one running the pod SNATs the request, and the rewritten source resolves to
+    # reserved:world at the destination endpoint -- not to the remote-node identity the
+    # ipcache lists that address under, and not to anything an ipBlock can name, since
+    # CIDR selectors do not match cluster-internal addresses and policy-cidr-match-mode
+    # is unset. host covers the pod-local node and kubelet's probes on :80.
+    #
+    # Allowing world on :80 grants nothing NodePort had not already granted -- the port is
+    # open to every host pfSense lets onto VLAN 130 regardless. It does NOT cost the point
+    # of this policy: in-cluster pods carry their own identities, never world, so every
+    # other namespace stays denied, every other port stays denied, and the lateral-pivot
+    # path this file exists to close stays closed.
+    - fromEntities:
+        - world
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+---
+# vault (wave 2, 2026-09-08). Plain NetworkPolicy, not a CNP: every caller here is a pod,
+# and pods carry pod identity, so a namespaceSelector matches. Only NodePort/LoadBalancer
+# namespaces need the entity handling documented on internal above.
+#
+# Two callers. Traefik serves vault.thales.internal (already behind the lan-only middleware,
+# so this is defence in depth, not the only control). External-secrets is the one that
+# would fail quietly: the ESO controller pods dial vault.vault.svc:8200 on behalf of all
+# three SecretStores -- guacamole, alertmanager and grafana -- so denying it does not break
+# vault, it stops secret refresh in three other namespaces with no error on either side.
+# Same-namespace covers raft :8201, which matters when this stops being a single replica.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-allow-ingress
+  namespace: vault
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: external-secrets
+        # blackbox-exporter probing /v1/sys/health for the VaultSealedOrDown alert
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8200
+          protocol: TCP
+---
+# authentik (wave 2, 2026-09-08). Traefik is the only inbound path, but it arrives by three
+# routes that all land on :9000 -- the authentik route itself, the /outpost.goauthentik.io
+# route, and the authentik-forwardauth middleware, which Traefik calls on every request to
+# guacamole. One rule covers all three.
+#
+# Grafana's OIDC login is NOT a cross-namespace edge and needs no rule here: it is
+# configured against https://authentik.example.com, so it leaves the cluster, hairpins
+# through Cloudflare and cloudflared, and arrives as Traefik like everything else.
+#
+# Same-namespace is what keeps this namespace alive -- server and worker to postgresql:5432
+# and redis:6379, and the 00:30 postgresql-backup CronJob, whose pods carry only a
+# job-name= label and would be missed by any app=-keyed rule.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: authentik-allow-ingress
+  namespace: authentik
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - port: 9000
+          protocol: TCP
+---
+# guacamole (wave 2, 2026-09-08). Traefik on :8080, by both the IngressRoute and the legacy
+# guacamole-ingress for guacamole.example.com. Same-namespace covers guacamole to
+# guacd :4822 and to postgres :5432, plus the 00:40 postgres-backup CronJob.
+#
+# Note what is deliberately absent: guacd's outbound RDP/VNC/SSH sessions to LAN hosts are
+# egress, untouched by this pass, and the target list lives in the Guacamole database where
+# no k8s object can see it. That is precisely why egress is a separate project.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: guacamole-allow-ingress
+  namespace: guacamole
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# lemp (wave 2, 2026-09-08). Two inbound paths. Traefik serves the archive at
+# thales.example.com and testing.example.com on :80 -- two routes, the rate-limited guestbook POST and the
+# catch-all, both to the same port.
+#
+# The second is the only real cross-namespace Prometheus scrape into an application
+# namespace in this cluster: ServiceMonitor monitoring/mysqld-exporter, namespaceSelector
+# lemp, port 9104. Everything else Prometheus reaches lives in monitoring or kube-system.
+# (There is also a monitoring/redis-exporter ServiceMonitor pointing here at app=redis-exporter,
+# but no such workload exists -- it is stale, and gets no rule.)
+#
+# Same-namespace covers php-fpm to mariadb:3306, the exporter to mariadb, and the 00:50
+# mariadb-backup CronJob.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lemp-allow-ingress
+  namespace: lemp
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - port: 80
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 9104
+          protocol: TCP
+---
+# media (wave 3, 2026-09-09). CNP because navidrome is on NodePort 30453 and needs the
+# entity handling documented on internal above; the rest of the namespace is pod-sourced.
+#
+# Traefik and monitoring are allowed without a port restriction, deliberately. Traefik
+# routes ten services here and the monitoring exporters call five more, so enumerating
+# fifteen ports buys nothing: both are trusted infrastructure namespaces, and the control
+# that matters is that everything else is denied. Note the exporters live in monitoring and
+# call *into* media -- there is no ServiceMonitor selecting anything in this namespace.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: media-allow-ingress
+  namespace: media
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: traefik
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+    - fromEntities:
+        - world
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "4533"
+              protocol: TCP
+---
+# monitoring (wave 3, 2026-09-09). CNP for two reasons that plain NetworkPolicy cannot
+# express: Prometheus is on NodePort 30901, and the kube-prometheus admission webhook is
+# called by the kube-apiserver over a path no ipBlock matches. Both the validating and the
+# mutating webhook land on containerPort 10250.
+#
+# The entity list is kube-apiserver plus remote-node and host, and the middle one is the
+# one that actually matches -- see the external-secrets block below for the evidence. The
+# apiserver's call is SNAT'd to its own cilium_host address and arrives as
+# reserved:remote-node; reserved:kube-apiserver never appears on this path.
+#
+# This webhook is failurePolicy: Ignore, unlike ESO's, so getting it wrong is silent in a
+# worse way than an outage: admission does not fail, it is simply skipped, and every
+# PrometheusRule and Prometheus CR goes in unvalidated with nothing logged.
+#
+# Same-namespace carries almost all of this namespace's traffic: Prometheus to every
+# exporter, promtail to loki:3100, loki-canary to loki-gateway, and the memberlist.
+# Prometheus scraping the node-exporter and promtail DaemonSets is unaffected either way --
+# host-network pods are not subject to pod policy.
+#
+# Not allowed, deliberately: NodePort 31539 (the config-reloader on :8080). It is exposed
+# by the Service but nothing is known to use it.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: monitoring-allow-ingress
+  namespace: monitoring
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: traefik
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+            # Jaeger: 16686 is the UI behind jaeger.thales.internal; 4317 is Traefik itself
+            # exporting OTLP spans (tracing.otlp.grpc in the traefik HelmRelease).
+            - port: "16686"
+              protocol: TCP
+            - port: "4317"
+              protocol: TCP
+    # kubecost queries Prometheus for every allocation it computes. It is a pod, so it
+    # arrives with pod identity -- the world/remote-node/host rule below covers the
+    # NodePort path only and does not cover this one. Denying it does not error in
+    # monitoring: kubecost logs an i/o timeout and serves empty dashboards.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kubecost
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    - fromEntities:
+        - world
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    # chilon (CT 117) forwarding pfSense syslog to promtail-syslog on 10.20.130.101.
+    - fromCIDR:
+        - 10.20.120.55/32
+      toPorts:
+        - ports:
+            - port: "1514"
+              protocol: TCP
+    # 9093 is the API server's service proxy to Alertmanager, used by euthyna's daily
+    # export. Without it the proxy call hangs for every caller, with no error.
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "10250"
+              protocol: TCP
+            - port: "9093"
+              protocol: TCP
+---
+# n8n (wave 3, 2026-09-09). CNP for NodePort 30678. Two distinct callers on the same port,
+# and both rules are needed: the NodePort arrives as world/remote-node, while alertmanager
+# is a pod and arrives with pod identity, so neither rule covers the other.
+#
+# The alertmanager edge is the one to be careful about -- everything surviving the mute list
+# is POSTed to the n8n alert-triage workflow (September 8, 2026). Denying it would not
+# error anywhere visible; the Discord channel would simply stop getting ACT/WATCH/IGNORE
+# verdicts while the raw alerts kept arriving.
+#
+# Egress is untouched here and that is not incidental: n8n's workflow destinations live in
+# SQLite on its PVC, invisible to kubectl, which makes this the namespace least safe to
+# lock down outbound without enumerating it in the UI first.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: n8n-allow-ingress
+  namespace: n8n
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "5678"
+              protocol: TCP
+    - fromEntities:
+        - world
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "5678"
+              protocol: TCP
+---
+# registry (wave 3, 2026-09-09). CNP for NodePort 30500. Pulls reach it from a kubelet
+# rather than from a pod, so they arrive as host on the local node and remote-node from the
+# other six -- exactly the case an ipBlock cannot express.
+#
+# Unrelated to policy but worth recording where someone will see it: this registry has no
+# PVC at all. Its images sit on the pod's overlay filesystem and do not survive a restart.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: registry-allow-ingress
+  namespace: registry
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+    - fromEntities:
+        - world
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "5000"
+              protocol: TCP
+---
+# external-secrets (wave 3, 2026-09-09). CNP purely for the admission webhook, which the
+# kube-apiserver calls on every ExternalSecret and SecretStore write. Service port 443,
+# containerPort 10250.
+#
+# Nothing else reaches this namespace: the controller dials out to Vault rather than being
+# dialled, and no ServiceMonitor scrapes its :8080 metrics today.
+#
+# fromEntities must list remote-node and host, not just kube-apiserver, and this cost an
+# outage to learn (2026-09-09). The apiserver does not reach the webhook from its node
+# address: the call is SNAT'd to that control plane's cilium_host address -- 10.244.6.239
+# for cp1 -- which carries reserved:remote-node. reserved:kube-apiserver is bound to
+# 10.20.130.10-.12 and never appears on this path. host covers the case where the webhook
+# pod happens to be scheduled on a control plane.
+#
+# Note this resolves DIFFERENTLY from the NodePort path on internal, which lands on
+# reserved:world from the same class of SNAT. Node-sourced traffic cannot be assumed to
+# carry any one identity -- observe it in Hubble, do not predict it.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: external-secrets-allow-ingress
+  namespace: external-secrets
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "10250"
+              protocol: TCP
+---
+# jenkins (wave 3, 2026-09-09). Traefik on :8080, reachable from the internet through the
+# cloudflared tunnel as jenkins.example.com.
+#
+# :50000 (JNLP) is left denied from outside the namespace on purpose. It is published for
+# inbound build agents, there are none today -- the controller is the only pod in the
+# namespace -- and same-namespace allow-all already covers any in-cluster agent that lands
+# here later. An agent scheduled into a *different* namespace would need a rule added.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jenkins-allow-ingress
+  namespace: jenkins
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# cloudflared (wave 3, 2026-09-09). No ingress rules at all, which is the point: this
+# namespace has no Service and nothing in the cluster dials it. It is outbound-only,
+# holding the tunnel open to the Cloudflare edge on 7844 and forwarding inbound requests to
+# traefik.traefik.svc:80 -- all of which is egress and untouched by this pass.
+#
+# Its liveness probe on :2000 still works: kubelet reaches the pod from the node it runs on,
+# which allow-localhost: "auto" permits. Verified in wave 1 on internal, whose pod kept both
+# probes passing under default-deny with no restarts.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cloudflared-allow-ingress
+  namespace: cloudflared
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# kubeapps (wave 3, 2026-09-09). Empty namespace -- no pods, no Services, nothing in the
+# repo creates it. The policy costs nothing and means anything that lands here later starts
+# closed rather than open, which is the opposite of how every other namespace in this
+# cluster began.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeapps-allow-ingress
+  namespace: kubeapps
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# knative-serving (wave 4, 2026-09-09). The control plane for both ksvc workloads, and the
+# namespace where a wrong rule is least visible -- nothing returns an error, revisions
+# simply stop waking from zero.
+#
+# CNP for the admission webhook on :8443. Knative registers three webhook configurations
+# (validating, mutating and the CRD conversion webhook), all failurePolicy-sensitive, and
+# the apiserver reaches them the same way it reaches ESO's -- SNAT'd to a control plane's
+# cilium_host address, arriving as reserved:remote-node rather than reserved:kube-apiserver.
+# Same entity list as external-secrets, for the same reason.
+#
+# Inbound from kourier-system is the request path: xDS on :18000 so Envoy can get its
+# config at all, and the activator on 8012/8013/8112 for revisions that are scaled to zero.
+#
+# Inbound from the revision namespaces is the one that breaks autoscaling quietly. Each
+# revision's queue-proxy pushes concurrency stats to autoscaler:8080 over a websocket; cut
+# it and the autoscaler sees no load, so scale-from-zero stalls and scale-to-zero misfires,
+# with nothing logged on either side. oracle is listed even though it carries no policy of
+# its own -- this rule governs ingress to THIS namespace, so it is required regardless.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: knative-serving-allow-ingress
+  namespace: knative-serving
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kourier-system
+      toPorts:
+        - ports:
+            - port: "18000"
+              protocol: TCP
+            - port: "8012"
+              protocol: TCP
+            - port: "8013"
+              protocol: TCP
+            - port: "8112"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oracle
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ssot-tools
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "8443"
+              protocol: TCP
+---
+# kourier-system (wave 4, 2026-09-09). Plain NetworkPolicy: the only things that dial this
+# namespace are Traefik and net-kourier-controller, and both are pods.
+#
+# Traefik routes Host(`*.knative.thales.internal`) to kourier-internal:80, which is
+# containerPort 8081 -- the policy has to name the container port, not the service port.
+# 8444 is the TLS listener, allowed for symmetry though nothing uses it today.
+#
+# Everything else this gateway does is outbound and untouched: pulling xDS from
+# net-kourier-controller:18000, and forwarding to the activator or straight to a revision
+# pod once one is running.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kourier-system-allow-ingress
+  namespace: kourier-system
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - port: 8081
+          protocol: TCP
+        - port: 8444
+          protocol: TCP
+    # net-kourier-controller probes the gateway to mark each Knative route ready.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: knative-serving
+      ports:
+        - port: 8081
+          protocol: TCP
+        - port: 8090
+          protocol: TCP
+---
+# ssot-tools (wave 4, 2026-09-09). Hosts the allocator ksvc -- next free L#/I# number --
+# which sits at zero replicas most of the time. Plain NetworkPolicy: both callers are pods.
+#
+# Two inbound paths, and a revision needs both. The activator in knative-serving proxies
+# the request that wakes a cold revision; once one is running, the Kourier gateway routes
+# to it directly and the activator drops out of the path. Deny either and the ksvc looks
+# healthy while returning nothing.
+#
+# Ports are deliberately unrestricted for these two namespaces rather than enumerated. A
+# revision pod's port surface is queue-proxy's, not the app's -- 8012 for user traffic,
+# 9090/9091 for metrics, 8112 for TLS, 8022 for admin -- it is set by the Knative version
+# rather than by anything in this repo, and it moves on upgrade. Both callers are control
+# plane. Traefik is absent on purpose: it never reaches this namespace directly, it goes to
+# kourier-internal and the request arrives from there.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ssot-tools-allow-ingress
+  namespace: ssot-tools
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: knative-serving
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kourier-system
+---
+# nextcloud (2026-09-12). Traefik on :80, serving both nextcloud.thales.internal and
+# nextcloud.example.com from a single IngressRoute, so one port covers both.
+# Same-namespace covers nextcloud to postgres :5432 and redis :6379, plus the 01:10
+# postgres-backup CronJob.
+#
+# Note what is deliberately absent: there is no Authentik ingress rule, because this app
+# does not use forward-auth. It authenticates via user_oidc, where the browser talks to
+# Authentik directly and Nextcloud's own call to the discovery endpoint is outbound --
+# egress, untouched by this pass.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nextcloud-allow-ingress
+  namespace: nextcloud
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - port: 80
+          protocol: TCP
+---
+# portfolio-staging (CICD-02, 2026-09-13). Traefik serves staging.thales.internal on the
+# Flagger-generated apex Service, whose pods listen on :8080. Flagger itself calls the
+# loadtester webhook on :8080 from flagger-system. The loadtester's curls to
+# portfolio-canary are same-namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: portfolio-staging-allow-ingress
+  namespace: portfolio-staging
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - port: 8080
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: flagger-system
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# flagger-system: nothing calls the controller -- no admission webhook, and its
+# ServiceMonitor is off. Same-namespace only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: flagger-system-allow-ingress
+  namespace: flagger-system
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+---
+# portfolio (CICD-02, 2026-09-13). Traefik serves example.com and
+# portfolio.thales.internal; the nginx pods listen on :8080. Flagger calls the loadtester
+# on :8080 for the production blue/green gates. Nothing else calls in.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: portfolio-allow-ingress
+  namespace: portfolio
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - port: 8080
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: flagger-system
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# reloader: nothing calls the controller -- no webhook, ServiceMonitor off. Same-namespace only.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: reloader-allow-ingress
+  namespace: reloader
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+---
+# city-pulse (2026-10-14). Traefik serves citypulse.example.com and
+# citypulse.thales.internal; the citypulse pods listen on :8080, where Prometheus also scrapes
+# /metrics from monitoring. Postgres, the nightly CronJob and the pg_dump CronJob are
+# same-namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: city-pulse-allow-ingress
+  namespace: city-pulse
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+# kyverno: same entity set as external-secrets, for the same reason -- kube-apiserver webhook
+# calls arrive with a node identity that cannot be predicted, and a dropped call fails open,
+# so a wrong rule here silently disables every policy rather than erroring. Prometheus
+# scrapes the controllers on :8000.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kyverno-allow-ingress
+  namespace: kyverno
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+---
+# backstage. Traefik serves backstage.thales.internal on :7007. Same-namespace covers
+# backstage to postgres :5432 and the 02:30 pg_dump CronJob. No Authentik rule: the app
+# does its own OIDC, and its calls to the issuer are egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backstage-allow-ingress
+  namespace: backstage
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - port: 7007
+          protocol: TCP

@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgresql-backup
+  namespace: authentik
+spec:
+  schedule: "30 0 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: postgresql-backup
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: pg-dump
+            image: 10.20.120.31:5000/postgres
+            env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: authentik-secrets
+                  key: pg-pass
+            command: ["/bin/sh", "-c"]
+            args:
+            - |
+              set -eu
+              pg_dump -Fc -Z6 -h postgresql -U authentik -f /backups/authentik-$(date +%F).dump authentik
+              find /backups -name "*.dump" -mtime +7 -delete
+              ls -lh /backups
+            volumeMounts:
+            - name: backups
+              mountPath: /backups
+          volumes:
+          - name: backups
+            persistentVolumeClaim:
+              claimName: db-backups-rbd

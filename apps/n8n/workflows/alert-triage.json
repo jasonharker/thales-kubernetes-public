@@ -1,0 +1,293 @@
+{
+  "id": "thalesAlertTri01",
+  "name": "THALES alert triage",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alert-triage",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "alert-webhook",
+      "name": "Alert webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "alert-triage"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// AlertManager posts {alerts:[{status,labels,annotations,startsAt,...}]}.\n// Emit one item per FIRING alert; resolved ones are dropped upstream by\n// send_resolved:false but re-checked here so a manual test can't slip past.\nconst root = $input.first().json;\nconst body = root.body ?? root;\nconst alerts = body.alerts ?? [];\nconst base = 'https://kubernetes.default.svc';\n\nreturn alerts\n  .filter(a => (a.status ?? 'firing') === 'firing')\n  .map(a => {\n    const l = a.labels ?? {};\n    const ann = a.annotations ?? {};\n    const ns = l.namespace || '';\n    const pod = l.pod || '';\n    const container = l.container || '';\n    const hasPod = Boolean(ns && pod);\n    const nsPath = ns ? base + '/api/v1/namespaces/' + ns : null;\n\n    // /version is a tiny always-valid response used as a no-op target so\n    // alerts without a pod/namespace still flow through the same chain\n    // instead of needing a branch. Build prompt ignores it.\n    const noop = base + '/version';\n    const logQ = 'tailLines=80&timestamps=true' + (container ? '&container=' + container : '');\n\n    return { json: {\n      alertname:    l.alertname || 'unknown',\n      severity:     l.severity || 'unknown',\n      namespace:    ns,\n      pod:          pod,\n      container:    container,\n      hasPod:       hasPod,\n      labels:       l,\n      summary:      ann.summary || '',\n      description:  ann.description || '',\n      runbook:      ann.runbook_url || '',\n      startsAt:     a.startsAt || '',\n      urlPod:       hasPod ? nsPath + '/pods/' + pod : noop,\n      // Filter events to the alerting object when we know it; a bare\n      // namespace-wide limit=25 buries the relevant rows under unrelated ones.\n      urlEvents:    hasPod ? nsPath + '/events?fieldSelector=involvedObject.name=' + pod + '&limit=25'\n                    : (ns ? nsPath + '/events?limit=25' : noop),\n      urlLogs:      hasPod ? nsPath + '/pods/' + pod + '/log?' + logQ : noop,\n    }};\n  });"
+      },
+      "id": "fan-out-alerts",
+      "name": "Fan out alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.urlPod }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "pod-status",
+      "name": "Pod status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesK8sRead001",
+          "name": "k8s-readonly"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Fan out alerts').item.json.urlEvents }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "events",
+      "name": "Events",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesK8sRead001",
+          "name": "k8s-readonly"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Fan out alerts').item.json.urlLogs }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "logs",
+      "name": "Logs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesK8sRead001",
+          "name": "k8s-readonly"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Runs once per alert. Assembles whatever evidence actually came back;\n// every fetch above is continue-on-fail, so missing data is normal and\n// must be reported as missing rather than silently omitted.\nconst a = $('Fan out alerts').item.json;\nconst grab = (fn, fb) => { try { const v = fn(); return (v === undefined || v === null) ? fb : v; } catch (e) { return fb; } };\n\nlet podInfo = 'n/a (alert carries no pod label)';\nif (a.hasPod) {\n  const p = grab(() => $('Pod status').item.json, null);\n  if (p && p.status) {\n    const cs = (p.status.containerStatuses || []).map(c => {\n      const state = Object.keys(c.state || {})[0] || 'unknown';\n      const detail = JSON.stringify((c.state || {})[state] || {});\n      return `  ${c.name}: ready=${c.ready} restarts=${c.restartCount} state=${state} ${detail}`;\n    }).join('\\n') || '  (none reported)';\n    const conds = (p.status.conditions || [])\n      .map(c => `${c.type}=${c.status}${c.reason ? '(' + c.reason + ')' : ''}`).join(' ');\n    podInfo = [\n      `phase=${p.status.phase}`,\n      `node=${grab(() => p.spec.nodeName, '?')}`,\n      `conditions: ${conds}`,\n      'containers:',\n      cs,\n    ].join('\\n');\n  } else {\n    podInfo = 'pod fetch failed or the pod no longer exists';\n  }\n}\n\nlet events = 'none returned';\nconst ev = grab(() => $('Events').item.json, null);\nif (ev && Array.isArray(ev.items) && ev.items.length) {\n  events = ev.items.slice(-15).map(e =>\n    `${e.lastTimestamp || e.eventTime || ''} ${e.type} ${e.reason} ${grab(() => e.involvedObject.name, '')}: ${e.message}`\n  ).join('\\n');\n}\n\nlet logs = 'none returned';\nif (a.hasPod) {\n  const lg = grab(() => $('Logs').item.json, null);\n  const txt = typeof lg === 'string' ? lg : grab(() => lg.data, '') || grab(() => lg.body, '');\n  if (typeof txt === 'string' && txt.trim()) {\n    logs = txt.trim().split('\\n').slice(-60).join('\\n');\n  }\n}\n\nconst user = [\n  `ALERT: ${a.alertname}  (severity=${a.severity})`,\n  `SUMMARY: ${a.summary}`,\n  `DESCRIPTION: ${a.description}`,\n  `LABELS: ${JSON.stringify(a.labels)}`,\n  `FIRING SINCE: ${a.startsAt}`,\n  '',\n  '--- POD STATUS ---',\n  podInfo,\n  '',\n  '--- RECENT EVENTS ---',\n  events,\n  '',\n  '--- RECENT LOGS ---',\n  logs,\n].join('\\n').slice(0, 24000);\n\nreturn { json: {\n  user,\n  alertname: a.alertname,\n  severity:  a.severity,\n  namespace: a.namespace,\n  pod:       a.pod,\n  runbook:   a.runbook,\n}};"
+      },
+      "id": "build-prompt",
+      "name": "Build prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'anthropic/claude-sonnet-5', max_tokens: 1500, temperature: 0, reasoning: { effort: 'low', exclude: true }, messages: [ { role: 'system', content: \"You are the alert triage agent for THALES, a single-operator homelab Kubernetes cluster: Talos Linux (immutable, API-only, no node SSH), Flux CD GitOps, Cilium CNI, Ceph RBD and local-path storage.\\n\\nYou receive ONE Prometheus alert plus live evidence pulled from the cluster API at the moment it fired. Your job is to decide whether the operator must act now, keep an eye on it, or ignore it.\\n\\nThe verdict IS the product. He stopped reading alerts because they arrived without one, so a confident, correct IGNORE is worth exactly as much as a correct ACT.\\n\\nRules:\\n- Most alerts in this cluster self-resolve (failed Jobs, pod restarts, short NotReady windows). Do not manufacture urgency.\\n- Cite only evidence you were actually given. Never invent a log line, pod name, node name or cause. If the evidence is empty or a fetch failed, say so plainly and pick WATCH rather than guessing.\\n- Known permanent artifacts, never real faults: kube-scheduler and kube-controller-manager bind 127.0.0.1 on Talos and can never be scraped.\\n- This cluster is Flux GitOps. An imperative `kubectl patch`/`edit` fix is reverted on the next reconcile, so a suggested action must be either a read-only diagnostic command or an edit to the Flux repo at ~/thales-kubernetes on hippodamus.\\n- kubectl and talosctl run from hippodamus (10.20.120.50). There is no SSH to Talos nodes.\\n\\nReply in EXACTLY this format and nothing else:\\nVERDICT: ACT|WATCH|IGNORE\\nWHY: <one sentence, plain language, names the actual cause>\\nEVIDENCE: <the single log or event line that proves it, verbatim, or \\\"none available\\\">\\nDO: <one command, or \\\"nothing\\\">\" }, { role: 'user', content: $json.user } ] }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesOpenRtr001",
+          "name": "OpenRouter"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parse the fixed reply shape into a Discord message. The verdict is\n// hoisted into the first line so it is readable from a notification\n// preview without opening the channel -- that is the entire point.\nconst a = $('Build prompt').item.json;\nconst reply = ($json.choices && $json.choices[0] && $json.choices[0].message\n  ? $json.choices[0].message.content : '' ).trim();\n\nif (!reply) {\n  return { json: { message: `\u2754 **TRIAGE FAILED** \u2014 \\`${a.alertname}\\`\\nModel returned no content; falling back to the raw alert.`, verdict: 'UNKNOWN' } };\n}\n\nconst m = reply.match(/VERDICT:\\s*(ACT|WATCH|IGNORE)/i);\nconst verdict = m ? m[1].toUpperCase() : 'UNKNOWN';\nconst emoji = { ACT: '\ud83d\udd34', WATCH: '\ud83d\udfe1', IGNORE: '\u26aa', UNKNOWN: '\u2754' }[verdict];\n\nconst where = a.namespace ? ` \u00b7 \\`${a.namespace}${a.pod ? '/' + a.pod : ''}\\`` : '';\nconst head = `${emoji} **${verdict}** \u2014 \\`${a.alertname}\\`${where}`;\nconst rest = reply.replace(/^VERDICT:.*$/im, '').trim();\n\nconst message = [head, '```', rest, '```', a.runbook ? `<${a.runbook}>` : '']\n  .filter(Boolean).join('\\n').slice(0, 1900);\n\nreturn { json: { message, verdict, raw: reply } };"
+      },
+      "id": "format-for-discord",
+      "name": "Format for Discord",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "operation": "sendLegacy",
+        "content": "={{ $json.message }}",
+        "options": {}
+      },
+      "id": "post-to-discord",
+      "name": "Post to Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "thalesDiscord001",
+          "name": "discord-triage"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Alert webhook": {
+      "main": [
+        [
+          {
+            "node": "Fan out alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan out alerts": {
+      "main": [
+        [
+          {
+            "node": "Pod status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pod status": {
+      "main": [
+        [
+          {
+            "node": "Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Events": {
+      "main": [
+        [
+          {
+            "node": "Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logs": {
+      "main": [
+        [
+          {
+            "node": "Build prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build prompt": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter": {
+      "main": [
+        [
+          {
+            "node": "Format for Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format for Discord": {
+      "main": [
+        [
+          {
+            "node": "Post to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

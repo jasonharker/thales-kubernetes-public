@@ -1,0 +1,59 @@
+# Flagger X.Y.Z -- progressive delivery for anaximander (CICD-02).
+#
+# meshProvider: kubernetes, deliberately. It does blue/green only -- Flagger stands up
+# <app>-primary and <app>-canary Services and repoints the apex Service once analysis
+# passes -- and it needs no traffic-shifting provider. Weighted canary would need Traefik
+# TraefikServices or Gateway API; neither is wanted for a static site.
+#
+# No metricsServer: the only Canary here gates on loadtester webhooks, not Prometheus
+# queries. The kubernetes provider's builtin request-success-rate reads app-exported
+# http_request_* series that nginx does not produce. Add a MetricTemplate (and a
+# monitoring ingress rule for flagger-system) before any Canary grows a metrics: block.
+#
+# Resources are set because the chart default request (10m/32Mi) is under the
+# LimitRange floor (50m/64Mi) and the pod would be rejected on the ReplicaSet only.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flagger-system
+  labels:
+    app.kubernetes.io/managed-by: flux
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: flagger
+  namespace: flagger-system
+spec:
+  interval: 1h
+  url: https://flagger.app
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: flagger
+  namespace: flagger-system
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: flagger
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: flagger
+  # The Canary/MetricTemplate/AlertProvider CRDs ship in the chart's crds/ directory.
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    meshProvider: kubernetes
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi

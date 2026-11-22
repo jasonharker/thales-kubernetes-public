@@ -1,0 +1,101 @@
+# Ported from /etc/traefik/dynamic/ on CT 103. Names are normalised — the LXC had
+# the forward-auth middleware as plain `authentik` and two near-identical header
+# middlewares (`secure-headers`, `security-headers`); only the one actually attached
+# to a live router is carried over.
+#
+# Dropped in the port: `sslRedirect` (present on the LXC's header middlewares but not
+# a Traefik v3 Headers option — moot regardless, Cloudflare always serves clients
+# HTTPS), plus the unused `rate-limit`, `fail2ban-middleware` and `ws-strip`.
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: https-headers
+  namespace: traefik
+spec:
+  headers:
+    customRequestHeaders:
+      X-Forwarded-Proto: https
+---
+# Was hardcoded to http://10.20.130.10:30902 on the LXC — cp1 only, so forward auth
+# for every protected service died with one node. ClusterIP removes that.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: authentik-forwardauth
+  namespace: traefik
+spec:
+  forwardAuth:
+    address: http://authentik-server.authentik.svc.cluster.local:9000/outpost.goauthentik.io/auth/traefik
+    trustForwardHeader: true
+    authResponseHeaders:
+      - X-authentik-username
+      - X-authentik-groups
+      - X-authentik-email
+      - X-authentik-name
+      - X-authentik-uid
+      - X-authentik-jwt
+      - X-authentik-meta-jwks
+      - X-authentik-meta-outpost
+      - X-authentik-meta-provider
+      - X-authentik-meta-app
+      - X-authentik-meta-version
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: security-headers
+  namespace: traefik
+spec:
+  headers:
+    customResponseHeaders:
+      X-Frame-Options: SAMEORIGIN
+      X-Content-Type-Options: nosniff
+      X-XSS-Protection: "1; mode=block"
+      Referrer-Policy: strict-origin-when-cross-origin
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    stsPreload: true
+---
+# 3 POSTs/min per client IP on the guestbook form (spam-bot mitigation).
+# depth 1 = rightmost X-Forwarded-For entry, i.e. the IP Cloudflare appended.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: guestbook-post-limit
+  namespace: traefik
+spec:
+  rateLimit:
+    average: 3
+    period: 1m
+    burst: 3
+    sourceCriterion:
+      ipStrategy:
+        depth: 1
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: lan-only
+  namespace: traefik
+spec:
+  ipAllowList:
+    sourceRange:
+      - 10.0.0.0/8
+---
+# city-pulse search queries Postgres; 60 requests/min per client IP with a burst of 30 is
+# far above a person clicking through place pages and well below a scraper.
+# depth 1 = rightmost X-Forwarded-For entry, i.e. the IP Cloudflare appended.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: citypulse-ratelimit
+  namespace: traefik
+spec:
+  rateLimit:
+    average: 60
+    period: 1m
+    burst: 30
+    sourceCriterion:
+      ipStrategy:
+        depth: 1

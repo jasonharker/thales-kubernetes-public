@@ -1,0 +1,159 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: thales-infrastructure
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: ssh://git@github.com/jasonharker/thales-kubernetes
+  ref:
+    branch: main
+  secretRef:
+    name: git-ssh-credentials
+---
+# core -- everything later layers need: CNI config, Vault, ESO, storage, Traefik, chart installs,
+# Knative CRDs. No wait: only the health checks below gate dependents, so Kyverno (fails open) and
+# kube-prometheus-stack cannot hold up a cold boot. A Kustomization that needs their CRDs races
+# them on the first reconcile and succeeds on retry.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: core
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./stacks/core
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: thales-infrastructure
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age
+  healthChecks:
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: external-secrets
+      namespace: external-secrets
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: ceph-csi-rbd
+      namespace: ceph-csi
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: traefik
+      namespace: traefik
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: knative
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./infrastructure/knative/serving
+  prune: true
+  wait: true
+  sourceRef:
+    kind: GitRepository
+    name: thales-infrastructure
+  dependsOn:
+    - name: core
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: activator
+      namespace: knative-serving
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: webhook
+      namespace: knative-serving
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: platform
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./stacks/platform
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: thales-infrastructure
+  dependsOn:
+    - name: core
+---
+# apps -- one bad manifest here stalls every app until fixed. To add an app, list it in
+# stacks/apps/kustomization.yaml.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./stacks/apps
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: thales-infrastructure
+  dependsOn:
+    - name: core
+    - name: knative
+---
+# Separate from guardrails: nothing dependsOn this, so a Kyverno failure gates nothing, and
+# network policies and quotas keep applying.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: kyverno-policies
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./infrastructure/kyverno/policies
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: thales-infrastructure
+  dependsOn:
+    - name: core
+---
+# Targets namespaces created by platform and apps. Deliberately not dependsOn apps, so one broken
+# app cannot freeze network policy updates; on a cold boot it retries until the namespaces exist.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: guardrails
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./stacks/guardrails
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: thales-infrastructure
+  dependsOn:
+    - name: core
+---
+# tenants -- Backstage self-service. ./tenants/registry has no kustomization.yaml, so Flux
+# generates one over every file there; each file is one tenant's own Kustomization, so a
+# broken tenant stalls only itself. Files arrive by PR from the Backstage App and are merged
+# by .github/workflows/tenant-pr.yml. Design: THALES-Backstage-Design (vault docs/).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tenants
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./tenants/registry
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: thales-infrastructure
+  dependsOn:
+    - name: core
+    - name: knative

@@ -1,0 +1,18 @@
+# guacd uses hostNetwork, so this ServiceAccount exists only to give the exception something
+# to match. See ceph-csi-nodeplugin.yaml for why this matches on ServiceAccount and reads both
+# shapes.
+apiVersion: policies.kyverno.io/v1
+kind: PolicyException
+metadata:
+  name: guacd
+  namespace: kyverno
+spec:
+  policyRefs:
+    - name: restrict-host-namespaces
+      kind: ValidatingPolicy
+  matchConditions:
+    - name: guacd-serviceaccount
+      expression: >-
+        object.metadata.namespace == 'guacamole' &&
+        (object.kind == 'Pod' ? object.spec.serviceAccountName : object.spec.template.spec.serviceAccountName)
+        == 'guacd'

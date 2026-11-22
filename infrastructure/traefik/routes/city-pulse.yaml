@@ -1,0 +1,23 @@
+# citypulse.example.com and citypulse.thales.internal -- city-pulse (namespace city-pulse).
+# A public, read-only site whose search hits Postgres, so the one rule carries a per-client
+# rate limit; both hosts are on that rule (middleware attaches to the rule, not the host).
+# The app sets its own CSP and Cache-Control.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: city-pulse
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`citypulse.example.com`) || Host(`citypulse.thales.internal`)
+      kind: Rule
+      middlewares:
+        - name: citypulse-ratelimit
+          namespace: traefik
+      services:
+        - name: citypulse
+          namespace: city-pulse
+          port: 80

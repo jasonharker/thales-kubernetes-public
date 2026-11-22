@@ -1,0 +1,309 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hestia-code
+  namespace: oracle
+data:
+  hestia.py: |
+    """hestia -- the hearth. Always-on watcher, polls the K8s API for pythia's pods,
+    serves a self-refreshing dashboard. Never fetches pythia itself (see plan trap #5).
+
+    ponytail: stdlib only. urllib + the mounted service-account token beats adding
+    a k8s client library for one GET every 2s.
+    """
+    import json
+    import ssl
+    import sys
+    import threading
+    import time
+    import urllib.parse
+    import urllib.request
+    from collections import deque
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    NS = "oracle"
+    LABEL = "serving.knative.dev/service=pythia"
+    SA = "/var/run/secrets/kubernetes.io/serviceaccount"
+    POLL_INTERVAL = 2.0
+
+    state = {"awake": False, "pods": []}
+    log: deque = deque(maxlen=20)
+    lock = threading.Lock()
+
+
+    def _api_get(path: str) -> dict:
+        with open(f"{SA}/token") as f:
+            token = f.read().strip()
+        ctx = ssl.create_default_context(cafile=f"{SA}/ca.crt")
+        req = urllib.request.Request(
+            f"https://kubernetes.default.svc{path}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as resp:
+            return json.loads(resp.read())
+
+
+    def diff_transition(prev_awake: bool, pods: list) -> str | None:
+        """Pure: given the previous awake state and a fresh pod list, what transition
+        (if any) just happened? Testable without a cluster -- see selftest."""
+        now_awake = any(p["phase"] == "Running" for p in pods)
+        if now_awake and not prev_awake:
+            return "woke"
+        if prev_awake and not now_awake:
+            return "slept"
+        return None
+
+
+    def poll_loop():
+        while True:
+            try:
+                data = _api_get(
+                    f"/api/v1/namespaces/{NS}/pods"
+                    f"?labelSelector={urllib.parse.quote(LABEL)}"
+                )
+                pods = [
+                    {
+                        "name": item["metadata"]["name"],
+                        "node": item["spec"].get("nodeName", "pending"),
+                        "phase": item["status"].get("phase", "Unknown"),
+                    }
+                    for item in data.get("items", [])
+                ]
+                with lock:
+                    prev_awake = state["awake"]
+                    transition = diff_transition(prev_awake, pods)
+                    state["pods"] = pods
+                    state["awake"] = any(p["phase"] == "Running" for p in pods)
+                    if transition:
+                        node = next(
+                            (p["node"] for p in pods if p["phase"] == "Running"),
+                            pods[0]["node"] if pods else "unknown",
+                        )
+                        log.appendleft({"t": time.time(), "event": transition, "node": node})
+            except Exception as exc:  # ponytail: log and keep polling, one bad tick is fine
+                with lock:
+                    log.appendleft({"t": time.time(), "event": f"poll-error: {exc}", "node": "-"})
+            time.sleep(POLL_INTERVAL)
+
+
+    ORACLE_URL = "http://pythia-oracle.knative.thales.internal"
+
+    PAGE = """<!doctype html><meta charset=utf-8><title>hestia</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, sans-serif; background: #0b0b10; color: #ddd;
+             max-width: 42em; margin: 3em auto; padding: 1em; }
+      #flame { width: 5em; height: 5em; margin: 0 auto 1em; border-radius: 50%;
+               background: radial-gradient(circle, #664 0%, #0b0b10 70%);
+               box-shadow: 0 0 20px 4px #331; transition: all 1.2s ease; }
+      #flame.awake { background: radial-gradient(circle, #ffb347 0%, #a33 55%, #0b0b10 75%);
+                     box-shadow: 0 0 60px 20px #f90a, 0 0 20px 6px #fc3;
+                     animation: breathe 1.6s ease-in-out infinite; }
+      @keyframes breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+      h1 { text-align: center; font-weight: 300; letter-spacing: .05em; margin: .3em 0; }
+      #s { text-align: center; color: #999; min-height: 1.4em; }
+      .row { display: flex; align-items: center; gap: .6em; margin: .2em 0; font-family: monospace; }
+      .bar { height: 1em; background: #f90; border-radius: 2px; transition: width .4s; }
+      #controls { text-align: center; margin: 1.5em 0; }
+      button { background: #222; color: #f90; border: 1px solid #f90; border-radius: 6px;
+               padding: .6em 1.2em; font-size: 1em; cursor: pointer; }
+      button:hover { background: #f90; color: #111; }
+      button:disabled { opacity: .4; cursor: default; }
+      a#oracle { color: #f90; }
+      #latency { text-align: center; font-family: monospace; color: #9d9; min-height: 1.4em; }
+      ul#log { font-family: monospace; font-size: .8em; color: #888; padding-left: 1.2em; }
+    </style>
+    <body>
+    <div id=flame></div>
+    <h1 id=h>the hearth</h1>
+    <p id=s>...</p>
+    <div id=bars></div>
+    <div id=controls>
+      <a id=oracle href="ORACLE_URL_PLACEHOLDER" target="_blank">Consult the Oracle &rarr;</a>
+      &nbsp;&nbsp;
+      <button id=load onclick="loadTest()">Consult the Oracle &times;20</button>
+    </div>
+    <p id=latency></p>
+    <ul id=log></ul>
+    <script>
+    const ORACLE = "ORACLE_URL_PLACEHOLDER";
+
+    async function tick(){
+      const r = await fetch('/status'); const d = await r.json();
+      document.getElementById('flame').className = d.awake ? 'awake' : '';
+      document.getElementById('h').textContent = d.awake ? 'the hearth (Oracle awake)' : 'the hearth (Oracle asleep)';
+      const byNode = {};
+      for (const p of d.pods) { byNode[p.node] = (byNode[p.node] || 0) + 1; }
+      document.getElementById('s').textContent = d.awake
+        ? d.pods.length + ' pod' + (d.pods.length===1?'':'s') + ' running across ' + Object.keys(byNode).length + ' node(s)'
+        : 'no pythia pods running -- scaled to zero';
+      const bars = document.getElementById('bars'); bars.innerHTML = '';
+      const max = Math.max(1, ...Object.values(byNode));
+      for (const [node, n] of Object.entries(byNode)) {
+        const row = document.createElement('div'); row.className = 'row';
+        row.innerHTML = '<span style="width:9em">' + node + '</span>' +
+          '<span class=bar style="width:' + (n / max * 12) + 'em"></span> ' + n;
+        bars.appendChild(row);
+      }
+      const ul = document.getElementById('log'); ul.innerHTML = '';
+      for (const e of d.log) {
+        const li = document.createElement('li');
+        li.textContent = new Date(e.t*1000).toLocaleTimeString() + '  ' + e.event + '  ' + e.node;
+        ul.appendChild(li);
+      }
+    }
+    tick(); setInterval(tick, 2000);
+
+    async function loadTest(){
+      const btn = document.getElementById('load'); btn.disabled = true;
+      const lat = document.getElementById('latency');
+      lat.textContent = 'firing 20 concurrent requests...';
+      const times = await Promise.all(Array.from({length: 20}, async () => {
+        const t0 = performance.now();
+        try { await fetch(ORACLE, {cache: 'no-store'}); } catch (e) { return null; }
+        return performance.now() - t0;
+      }));
+      const ok = times.filter(t => t !== null).sort((a,b) => a-b);
+      if (ok.length === 0) { lat.textContent = 'all requests failed'; btn.disabled = false; return; }
+      const fmt = ms => ms.toFixed(0) + 'ms';
+      lat.textContent = ok.length + '/20 ok -- min ' + fmt(ok[0]) + ', median ' +
+        fmt(ok[Math.floor(ok.length/2)]) + ', max ' + fmt(ok[ok.length-1]) +
+        '  (first request pays the cold-start cost; later ones hit a warm pod)';
+      btn.disabled = false;
+    }
+    </script>
+    </body>""".replace("ORACLE_URL_PLACEHOLDER", ORACLE_URL)
+
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            if self.path == "/status":
+                with lock:
+                    body = json.dumps({**state, "log": list(log)}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            body = PAGE.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, fmt, *args):
+            pass
+
+
+    def selftest():
+        running = [{"name": "p1", "node": "n1", "phase": "Running"}]
+        empty: list = []
+        pending = [{"name": "p1", "node": "n1", "phase": "Pending"}]
+
+        assert diff_transition(False, running) == "woke"
+        assert diff_transition(True, empty) == "slept"
+        assert diff_transition(True, running) is None
+        assert diff_transition(False, empty) is None
+        assert diff_transition(False, pending) is None  # Pending is not awake
+        print("hestia selftest OK")
+
+
+    if __name__ == "__main__":
+        if "--selftest" in sys.argv:
+            selftest()
+            sys.exit(0)
+        threading.Thread(target=poll_loop, daemon=True).start()
+        ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hestia
+  namespace: oracle
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hestia-pod-reader
+  namespace: oracle
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hestia-pod-reader
+  namespace: oracle
+subjects:
+  - kind: ServiceAccount
+    name: hestia
+    namespace: oracle
+roleRef:
+  kind: Role
+  name: hestia-pod-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hestia
+  namespace: oracle
+  labels:
+    app: hestia
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hestia
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hestia
+        app: hestia
+    spec:
+      serviceAccountName: hestia
+      containers:
+        - name: hestia
+          image: python
+          command: ["python3", "/app/hestia.py"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: code
+              mountPath: /app
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: code
+          configMap:
+            name: hestia-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hestia
+  namespace: oracle
+spec:
+  type: ClusterIP
+  selector:
+    app: hestia
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

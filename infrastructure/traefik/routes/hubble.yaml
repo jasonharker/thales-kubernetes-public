@@ -1,0 +1,30 @@
+# hubble.thales.internal — Hubble UI, internal only.
+#
+# Mirrors the Traefik dashboard's treatment: lan-only and nothing else. Hubble UI
+# ships with no authentication of its own, so the middleware is the only control.
+#
+# ⚠️ lan-only is ipAllowList 10.0.0.0/8 — every THALES VLAN — and has never been
+# negatively tested. Same protection the dashboard already has, so this adds no new
+# weakness, but it is not a strong one.
+#
+# ⚠️ namespace: traefik on the middleware ref is required. A ref by name alone fails
+# silently even with allowCrossNamespace.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hubble
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`hubble.thales.internal`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+      services:
+        - name: hubble-ui
+          namespace: kube-system
+          port: 80

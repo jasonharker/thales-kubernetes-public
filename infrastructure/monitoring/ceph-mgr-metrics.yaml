@@ -1,0 +1,55 @@
+# ceph-mgr's prometheus module on the Proxmox nodes' VLAN 130 addresses, which pods reach
+# without crossing pfSense. Requires, before merging: `ceph mgr module enable prometheus`
+# and a host.fw rule for 10.20.130.0/24 to tcp/9283 on every node.
+#
+# Every mgr host is listed because the active mgr moves. Standbys answer with an empty
+# 200, so only the active one produces series. honorLabels keeps ceph's own `instance`
+# label on per-daemon metrics.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ceph-mgr
+  namespace: monitoring
+  labels:
+    app: ceph-mgr
+spec:
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: 9283
+      protocol: TCP
+      targetPort: 9283
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: ceph-mgr
+  namespace: monitoring
+  labels:
+    app: ceph-mgr
+subsets:
+  - addresses:
+      - ip: 10.20.130.13
+      - ip: 10.20.130.14
+      - ip: 10.20.130.15
+      - ip: 10.20.130.16
+    ports:
+      - name: metrics
+        port: 9283
+        protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ceph-mgr
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: ceph-mgr
+  endpoints:
+    - port: metrics
+      interval: 30s
+      honorLabels: true

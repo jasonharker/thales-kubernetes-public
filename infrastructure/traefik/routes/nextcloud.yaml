@@ -1,0 +1,61 @@
+# nextcloud.thales.internal + nextcloud.example.com
+#
+# ⚠️ NO authentik-forwardauth here, and that is deliberate — the same rule that
+# applies to Grafana. Nextcloud authenticates against Authentik natively via its
+# user_oidc app; stacking forward-auth on top gives a double login for humans and
+# breaks every desktop/mobile sync client outright, since /remote.php/dav has no
+# browser to complete the redirect with.
+#
+# NO https-headers either. That middleware unconditionally forges
+# X-Forwarded-Proto: https, which would make the internal http:// hostname generate
+# https:// URLs and fail. It is not needed: cloudflared sets the header itself for
+# public traffic and Traefik's `web` entrypoint trusts it (trustedIPs covers the
+# Cloudflare edge plus the pod CIDR), while LAN traffic arrives without it and is
+# correctly reported as http. Nextcloud honours both via TRUSTED_PROXIES.
+#
+# The middleware ref carries `namespace: traefik` explicitly. A cross-namespace ref
+# by bare name fails SILENTLY even with allowCrossNamespace: true.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: nextcloud
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    # Euro-Office Docs (apps/nextcloud/eurooffice.yaml). Traefik ranks rules by
+    # length, so this outranks the catch-all below without an explicit priority.
+    - match: (Host(`nextcloud.example.com`) || Host(`nextcloud.thales.internal`)) && PathPrefix(`/eurooffice`)
+      kind: Rule
+      middlewares:
+        - name: security-headers
+          namespace: traefik
+        - name: eurooffice-strip
+          namespace: traefik
+      services:
+        - name: eurooffice
+          namespace: nextcloud
+          port: 80
+    - match: Host(`nextcloud.example.com`) || Host(`nextcloud.thales.internal`)
+      kind: Rule
+      middlewares:
+        - name: security-headers
+          namespace: traefik
+      services:
+        - name: nextcloud
+          namespace: nextcloud
+          port: 80
+---
+# stripPrefix also sets X-Forwarded-Prefix: /eurooffice, which the docservice
+# uses to build its own URLs under the sub-path.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: eurooffice-strip
+  namespace: traefik
+spec:
+  stripPrefix:
+    prefixes:
+      - /eurooffice

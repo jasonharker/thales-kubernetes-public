@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    secret.reloader.stakater.com/auto: "true"
+    kubectl.kubernetes.io/last-applied-configuration: '{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"snmp-exporter","namespace":"monitoring"},"spec":{"replicas":1,"selector":{"matchLabels":{"app":"snmp-exporter"}},"template":{"metadata":{"labels":{"app":"snmp-exporter"}},"spec":{"containers":[{"image":"prom/snmp-exporter:vX.Y.Z","name":"snmp-exporter","ports":[{"containerPort":9116,"name":"metrics"}],"resources":{"limits":{"cpu":"100m","memory":"128Mi"},"requests":{"cpu":"50m","memory":"64Mi"}}}]}}}}
+
+      '
+  name: snmp-exporter
+  namespace: monitoring
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: snmp-exporter
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: snmp-exporter
+        app: snmp-exporter
+    spec:
+      containers:
+      - image: prom/snmp-exporter
+        imagePullPolicy: IfNotPresent
+        name: snmp-exporter
+        ports:
+        - containerPort: 9116
+          name: metrics
+          protocol: TCP
+        readinessProbe:
+          tcpSocket:
+            port: 9116
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 6
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 48Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /etc/snmp_exporter/snmp.yml
+          name: snmp-config
+          readOnly: true
+          subPath: snmp.yml
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: snmp-config
+        secret:
+          defaultMode: 420
+          secretName: snmp-exporter-config
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cisco-switch
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  endpoints:
+  - interval: 30s
+    params:
+      module:
+      - if_mib
+      target:
+      - 10.20.110.2
+    path: /snmp
+    port: metrics
+    relabelings:
+    - action: replace
+      sourceLabels:
+      - __param_target
+      targetLabel: instance
+    - action: replace
+      replacement: snmp-exporter.monitoring.svc.cluster.local:9116
+      targetLabel: __address__
+    - action: replace
+      replacement: cisco-switch
+      targetLabel: job
+  selector:
+    matchLabels:
+      app: snmp-exporter

@@ -1,0 +1,41 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: network-policy-drops
+  namespace: monitoring
+  labels:
+    release: prometheus # matches Prometheus's ruleSelector
+spec:
+  groups:
+    - name: network-policy-drops
+      rules:
+        # `cilium_policy_verdict_total` does NOT exist in this cluster -- checked against live
+        # Prometheus September 9, 2026, along with the other two candidates. Of the metrics that
+        # do exist, `cilium_drop_count_total` carries `direction` and `hubble_drop_total` does
+        # not; ingress is the only half enforced today, so separating an ingress drop (a policy
+        # we wrote) from an egress drop (something else entirely) is the distinction that matters.
+        - alert: NetworkPolicyDropping
+          # increase() over a wide window rather than rate() with a long `for:` -- the failure
+          # this exists to catch is a nightly or monthly job denied for a few seconds, and any
+          # `for:` longer than the burst would silently miss exactly that case.
+          # Threshold is > 0 because the measured baseline is zero; raise it if it proves noisy,
+          # but tune on evidence rather than guessing a number now.
+          # direction="INGRESS" added 2026-09-21: egress isn't policy-enforced yet (see the
+          # comment above), so egress drops aren't a missing-caller signal -- they were just
+          # background noise (7d max 4-147 packets/30m per node) driving ~70% of the alert
+          # triage workflow's token spend for zero actionable hits. Ingress stayed 0-22/30m in
+          # the same window. Re-add egress once it's actually enforced.
+          expr: sum by (node, direction) (increase(cilium_drop_count_total{reason="Policy denied", direction="INGRESS"}[30m])) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "NetworkPolicy denied {{ $labels.direction }} traffic on {{ $labels.node }}"
+            description: >-
+              {{ $value | printf "%.0f" }} packets denied by NetworkPolicy on {{ $labels.node }}
+              ({{ $labels.direction }}) in the last 30m. Baseline is zero, so any non-zero value
+              is a real deny -- most likely a policy in infrastructure/network-policies/ missing
+              a caller. This metric carries no identity, but `hubble_drop_total` does since
+              September 16, 2026 (drop:sourceContext=pod|reserved-identity in the Cilium values),
+              so name the culprit in Prometheus rather than racing Hubble's ring buffer:
+              topk(10, sum by (source, destination, protocol)
+              (increase(hubble_drop_total{reason="POLICY_DENIED"}[30m])))

@@ -1,0 +1,10 @@
+# No pod-security labels, matching apps/n8n/namespace.yaml. PSA enforce is unset
+# on every namespace in this cluster; guacamole's `privileged` label is a no-op
+# carried over from its port. Nextcloud's image starts as root to populate
+# /var/www/html and then drops to www-data, so a `restricted` label here would
+# stop it from ever booting.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nextcloud

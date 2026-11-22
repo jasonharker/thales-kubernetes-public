@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: external-vms
+  namespace: monitoring
+subsets:
+- addresses:
+  - ip: 10.20.120.31
+    targetRef:
+      kind: Node
+      name: zeno
+  - ip: 10.20.120.40
+    targetRef:
+      kind: Node
+      name: hippias
+  ports:
+  - name: '9100'
+    port: 9100
+    protocol: TCP
+

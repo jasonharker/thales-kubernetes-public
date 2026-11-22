@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    secret.reloader.stakater.com/auto: "true"
+  name: navidrome
+  namespace: media
+  labels:
+    app: navidrome
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: navidrome
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: navidrome
+        app: navidrome
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: anaximander-w3
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: navidrome
+          image: deluan/navidrome
+          ports:
+            - containerPort: 4533
+              name: http
+          env:
+            - name: ND_MUSICFOLDER
+              value: /music
+            - name: ND_DATAFOLDER
+              value: /data
+            - name: ND_SCANSCHEDULE
+              value: "1h"
+            - name: ND_LOGLEVEL
+              value: "info"
+            - name: ND_ARTISTARTPRIORITY
+              value: "artist.*, folder.*, album/artist.*, external"
+            - name: ND_SESSIONTIMEOUT
+              value: "24h"
+            - name: ND_BASEURL
+              value: ""
+            - name: ND_ENABLETRANSCODINGCONFIG
+              value: "true"
+            - name: ND_ENABLESHARING
+              value: "true"
+            - name: ND_ADDRESS
+              value: "0.0.0.0"
+            - name: ND_LASTFM_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: navidrome-lastfm
+                  key: apikey
+            - name: ND_LASTFM_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: navidrome-lastfm
+                  key: secret
+          volumeMounts:
+            - name: music
+              mountPath: /music
+              readOnly: true
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: 4533
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: 4533
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+      volumes:
+        - name: music
+          persistentVolumeClaim:
+            claimName: navidrome-music-pvc
+            readOnly: true
+        - name: data
+          persistentVolumeClaim:
+            claimName: navidrome-data-rbd

@@ -1,0 +1,27 @@
+# jenkins.example.com — ported from /etc/traefik/dynamic/jenkins.yml on CT 103.
+#
+# No middlewares: the LXC router carries none either. Jenkins has its own auth and
+# is deliberately not behind the Authentik forward auth.
+#
+# The LXC balances across four hardcoded node addresses on NodePort 30808; here it
+# is the ClusterIP Service, so cp2/cp3 (which the LXC's list never gained) and any
+# future node are covered automatically.
+#
+# CT 103 stays authoritative for live traffic — cloudflared still dials it. This
+# route is reachable in-cluster by Host header and moves at Sprint 4.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: jenkins
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`jenkins.example.com`) || Host(`jenkins.thales.internal`)
+      kind: Rule
+      services:
+        - name: jenkins
+          namespace: jenkins
+          port: 8080

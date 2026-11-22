@@ -1,0 +1,169 @@
+kubeProxyReplacement: true
+
+# KubePrism, not a control-plane address. Talos runs a local API load balancer on
+# every node at 127.0.0.1:7445 that fails over across all three control planes;
+# verified enabled and healthy on all six nodes. Pointing at cp1 directly made
+# every agent in the cluster depend on one node for API access, which is the same
+# single point of failure the kubeconfig already has and did not need extending
+# to the datapath. This also means the VIP (10.20.130.9) is not a prerequisite.
+k8sServiceHost: localhost
+k8sServicePort: 7445
+
+ipam:
+  mode: kubernetes
+
+l2announcements:
+  enabled: true
+
+# L2 announcements use leader election, which is chatty against the API server.
+# Cilium's docs call for raising the client rate limit when it is enabled.
+k8sClientRateLimit:
+  qps: 50
+  burst: 100
+
+# BGP control plane, added 2026-08-23 for the Sprint 5 evaluation. This flag only
+# compiles the feature in and registers its CRDs; the peering itself is bgp.yaml,
+# which Flux reconciles. L2 announcements stay enabled alongside it deliberately —
+# the two coexist, clients already on VLAN 130 keep resolving the VIP by ARP, and
+# rollback is deleting the CRs rather than touching this file.
+bgpControlPlane:
+  enabled: true
+
+operator:
+  replicas: 2
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+hubble:
+  relay:
+    enabled: true
+  ui:
+    enabled: true
+  metrics:
+    # Deliberately conservative. Plain `dns` rather than `dns:query`, which adds a
+    # per-domain label and is the usual cardinality trap. Incident #28 is why this
+    # is not the full set: monitoring has taken Prometheus down here before.
+    enabled:
+      - dns
+      # `drop` carries source/destination context: the NetworkPolicyDropping alert
+      # fires off cilium_drop_count_total, which has only node+direction, so every
+      # deny needed a live `hubble observe` to attribute and the ring buffer had
+      # always evicted it. Context is on `drop` ALONE -- denies are a handful a day
+      # here, so the label set stays tiny; putting it on `flow` or `dns` is the
+      # cardinality trap that Incident #28 was about. Destination is an identity,
+      # not `ip`, for the same reason.
+      - "drop:sourceContext=pod|reserved-identity;destinationContext=pod|reserved-identity"
+      - tcp
+      - flow
+      - icmp
+    serviceMonitor:
+      enabled: true
+
+# Merged into the cilium-config ConfigMap. There is NO `allowLocalhost` chart
+# value — this is the only way to set it, and the schema would have silently
+# ignored the wrong key rather than rejecting it.
+#
+# Explicit because flux-system is default-deny on ingress and its kubelet probes
+# (9440, plus 9090 on source-controller) are not in the allowed set. 'auto' is the
+# Cilium default; stating it means the behaviour is a decision, not an accident.
+extraConfig:
+  allow-localhost: "auto"
+
+# Talos refuses SYS_MODULE — it is an immutable OS and will not permit kernel
+# module loading, so runc fails the container with "unable to apply caps" before
+# it ever starts. Both the agent and clean-cilium-state request it by default.
+#
+# These lists are the chart X.Y.Z defaults MINUS SYS_MODULE, taken from the
+# rendered output rather than from the Talos docs, whose list predates this
+# chart and omits SYSLOG that the agent does request.
+securityContext:
+  capabilities:
+    ciliumAgent:
+      - CHOWN
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - IPC_LOCK
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - SYSLOG
+    cleanCiliumState:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE
+
+# --- Observability, added 2026-08-21 ---
+# The CNI ran unmonitored after the migration: agent metrics were off entirely and
+# the operator exposed :9963 with nothing scraping it. This cluster is the one
+# component every packet depends on, so it needs to be visible.
+#
+# Prometheus here selects ServiceMonitors with an EMPTY selector in an EMPTY
+# namespace selector, i.e. all ServiceMonitors in all namespaces, so no matching
+# labels are required for these to be picked up. Verified against the Prometheus
+# CR before enabling.
+prometheus:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+
+# --- Transport encryption, MESH-01, added 2026-09-13 ---
+# Pod-to-pod traffic between nodes rides WireGuard (UDP 51871) inside the existing
+# datapath. WireGuard is built into the Talos kernel, so the stripped SYS_MODULE
+# does not matter. nodeEncryption is left off: host traffic between nodes is already
+# TLS, and the Ceph hosts are not Cilium nodes, so it would not encrypt RBD either.
+encryption:
+  enabled: true
+  type: wireguard
+
+# --- MTU pinned, added 2026-09-13 ---
+# Auto-detection takes the smallest MTU across detected devices, and every node runs
+# tailscale0 at 1280, so the whole cluster ran pod routes at 1280 minus overhead
+# (1135 cross-node with VXLAN + WireGuard) on a 1500 underlay. This only sets
+# Cilium's own interfaces; tailscale0 stays attached. Pinning `devices` instead would
+# detach bpf_host from tailscale0 and drop NodePort traffic arriving over it.
+# Restarting the agents (rollout restart ds/cilium) rewrites existing pods' eth0 MTU in
+# place; workloads do not need restarting (L#125).
+MTU: 1500
+
+# --- Agent resources, added 2026-10-25 ---
+# The chart default is resources: {}, which left the agent invisible to the scheduler
+# and made it the Talos OOM controller's favourite victim. That controller ranks only
+# pod cgroups with no memory.max set (the OOMConfig example expression scores any
+# cgroup with memory_max at 0), so once w2 was packed to 90% of memory requests after
+# a staggered worker reboot it killed cilium 268 times in four hours, and new pods on
+# w2 lost networking each time. A pod gets memory.max only when EVERY container,
+# init containers included, declares a memory limit, hence initResources as well.
+# The request is about typical usage (231-505Mi across the seven agents, observed
+# 2026-10-25); the limit is twice the peak seen. No CPU limit: throttling the
+# datapath agent costs more than it saves.
+resources:
+  requests:
+    cpu: 100m
+    memory: 384Mi
+  limits:
+    memory: 1Gi
+
+initResources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 512Mi
+
+# cilium-envoy is its own DaemonSet with a single container and no init containers,
+# BestEffort under the chart default, so the OOM controller killed it on w2 too.
+# Usage was 15-19Mi on every node on 2026-10-25; the limit leaves room for L7 config
+# growth well past that.
+envoy:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 256Mi

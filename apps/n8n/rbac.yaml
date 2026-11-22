@@ -1,0 +1,66 @@
+# Read-only cluster access for the n8n alert-triage workflow.
+#
+# n8n's HTTP Request node cannot read the pod's projected ServiceAccount
+# token off disk, so the workflow authenticates with a long-lived token
+# from the Secret below, held in n8n's own encrypted credential store.
+# That token does not rotate — acceptable only because this role is
+# strictly read-only and cannot mutate anything in the cluster.
+#
+# The n8n Deployment itself is left on the `default` ServiceAccount: the
+# workflow carries its bearer token explicitly, so binding the pod to this
+# SA would grant nothing extra and would force a restart for no gain.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: n8n-triage
+  namespace: n8n
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: n8n-triage-readonly
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - events
+      - nodes
+      - namespaces
+      - services
+      - persistentvolumeclaims
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: n8n-triage-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: n8n-triage-readonly
+subjects:
+  - kind: ServiceAccount
+    name: n8n-triage
+    namespace: n8n
+---
+# Non-expiring token for the SA above. Kubernetes populates .data.token;
+# it is generated in-cluster and never committed, so this manifest is safe
+# in git — it declares the Secret, it does not carry its value.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-triage-token
+  namespace: n8n
+  annotations:
+    kubernetes.io/service-account.name: n8n-triage
+type: kubernetes.io/service-account-token

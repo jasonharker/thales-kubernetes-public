@@ -1,0 +1,22 @@
+# Workloads require-probes cannot usefully cover. The ceph-csi, Kyverno and local-path manifests
+# ship no probe for these containers.
+#
+# Matches namespace plus ServiceAccount; see ceph-csi-nodeplugin.yaml.
+apiVersion: policies.kyverno.io/v1
+kind: PolicyException
+metadata:
+  name: no-probe-target
+  namespace: kyverno
+spec:
+  policyRefs:
+    - name: require-probes
+      kind: ValidatingPolicy
+  matchConditions:
+    - name: no-probe-target-serviceaccount
+      expression: >-
+        (object.metadata.namespace == 'ceph-csi' &&
+        object.spec.serviceAccountName in ['ceph-csi-rbd-nodeplugin', 'ceph-csi-rbd-provisioner']) ||
+        (object.metadata.namespace == 'kyverno' &&
+        object.spec.serviceAccountName in ['kyverno-background-controller', 'kyverno-reports-controller']) ||
+        (object.metadata.namespace == 'local-path-storage' &&
+        object.spec.serviceAccountName == 'local-path-provisioner-service-account')

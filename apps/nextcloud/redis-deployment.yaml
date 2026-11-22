@@ -1,0 +1,63 @@
+# Nextcloud uses this for transactional file locking and as its object cache.
+# Same shape as infrastructure/authentik/redis.yaml, with the image pulled direct
+# from docker.io rather than through the authentik-only registry mirror.
+#
+# strategy: Recreate for the same RWO-single-attach reason as postgres.
+#
+# No auth on the Redis instance: it is ClusterIP-only inside this namespace, which
+# matches how authentik runs its own.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: nextcloud
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis
+          imagePullPolicy: IfNotPresent
+          command: [redis-server, --save, '60', '1', --loglevel, warning]
+          ports:
+            - containerPort: 6379
+              protocol: TCP
+          livenessProbe:
+            exec:
+              command: [redis-cli, ping]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: [redis-cli, ping]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: redis-data-rbd

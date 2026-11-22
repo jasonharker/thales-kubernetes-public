@@ -1,0 +1,129 @@
+# In-cluster Traefik, deployed alongside the LXC (CT 103) rather than replacing it.
+# CT 103 stays authoritative until cloudflared's origin is repointed in a later pass.
+#
+# NodePort 30880 — 30080 is taken by lemp/dashboard, so the plan's suggested value
+# was not available.
+#
+# DaemonSet + externalTrafficPolicy: Local is deliberate. With the default Cluster
+# policy every request arrives SNAT'd from a node IP, which silently defeats the
+# lan-only ipAllowList on the dashboard (a node IP is inside 10.0.0.0/8, so it would
+# allow everything). Local preserves the real client IP, but only nodes running a pod
+# answer on the NodePort — hence DaemonSet. Control planes are tainted, so this lands
+# on every untainted worker (currently w1-w4, 10.20.130.21-.24).
+#
+# Values validate against the chart's own values.schema.json. Note the naming: the
+# log keys are `log` and `accessLog` (not `logs`), and the service type lives under
+# `service.spec`, not `service.type`.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: traefik
+  namespace: traefik
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: traefik
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: traefik
+  values:
+    deployment:
+      kind: DaemonSet
+
+    service:
+      # Pinned, not auto-assigned. LB-IPAM hands out the lowest free address, which is
+      # stable in practice but not guaranteed across Service recreation — and every
+      # internal hostname resolves to this address, so a silent move would break all of
+      # them. Verified 2026-08-22 that this annotation genuinely pins, by requesting
+      # .140 and receiving .140; requesting .100 would have been indistinguishable from
+      # auto-assignment.
+      annotations:
+        lbipam.cilium.io/ips: "10.20.130.100"
+      spec:
+        type: LoadBalancer
+        externalTrafficPolicy: Local
+
+    ports:
+      web:
+        expose:
+          default: true
+        nodePort: 30880
+        forwardedHeaders:
+          trustedIPs:
+            # Cloudflare edge — used once cloudflared moves in-cluster
+            - "173.245.48.0/20"
+            - "103.21.244.0/22"
+            - "103.22.200.0/22"
+            - "103.31.4.0/22"
+            - "141.101.64.0/18"
+            - "108.162.192.0/18"
+            - "190.93.240.0/20"
+            - "188.114.96.0/20"
+            - "197.234.240.0/22"
+            - "198.41.128.0/17"
+            - "162.158.0.0/15"
+            - "104.16.0.0/13"
+            - "104.24.0.0/14"
+            - "172.64.0.0/13"
+            - "131.0.72.0/22"
+            # pod CIDR — in-cluster cloudflared, live since August 19, 2026
+            - "10.244.0.0/16"
+      # HTTPS for *.thales.internal on 10.20.130.100:443. The chart default http.tls.enabled
+      # applies TLS to every router on this entrypoint; the cert is the TLSStore default in
+      # routes/tlsstore.yaml. Its NodePort is auto-assigned; the documented fallback is 30880 (http).
+      websecure:
+        expose:
+          default: true
+      traefik:
+        expose:
+          default: false
+
+    providers:
+      kubernetesCRD:
+        enabled: true
+        allowCrossNamespace: true
+      kubernetesIngress:
+        enabled: false
+      kubernetesGateway:
+        enabled: false
+
+    # Not claiming the default IngressClass — nothing in THALES uses Ingress objects,
+    # and IngressRoute does not need one.
+    ingressClass:
+      enabled: false
+
+    # api.insecure stays false (SSOT Traefik lesson #11). The chart's own dashboard
+    # IngressRoute is off; a lan-only-guarded route gets added with the internal
+    # hostnames in a later pass.
+    api:
+      dashboard: true
+      insecure: false
+    ingressRoute:
+      dashboard:
+        enabled: false
+
+    log:
+      level: INFO
+    accessLog:
+      enabled: true
+      format: json
+
+    # Spans to Jaeger in monitoring over OTLP gRPC, plaintext in-cluster. sampleRate is
+    # left at the default 1.0 (every request) — lower it here if Badger volume grows.
+    tracing:
+      otlp:
+        enabled: true
+        grpc:
+          enabled: true
+          endpoint: jaeger.monitoring.svc.cluster.local:4317
+          insecure: true
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi

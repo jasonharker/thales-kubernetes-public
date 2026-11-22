@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    secret.reloader.stakater.com/auto: "true"
+  name: mysqld-exporter
+  namespace: lemp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysqld-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mysqld-exporter
+        app: mysqld-exporter
+    spec:
+      containers:
+        - name: exporter
+          image: prom/mysqld-exporter
+          args:
+            - --mysqld.address=mariadb.lemp.svc.cluster.local:3306
+            - --mysqld.username=lemp_user
+          env:
+            # The hand-applied original had this password inline in plaintext;
+            # it is the same lemp_user credential the web app reads from
+            # mariadb-secret, so reference that instead.
+            - name: MYSQLD_EXPORTER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mariadb-secret
+                  key: user-password
+          ports:
+            - containerPort: 9104
+              name: metrics
+          readinessProbe:
+            tcpSocket:
+              port: 9104
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysqld-exporter
+  namespace: lemp
+  labels:
+    app: mysqld-exporter
+spec:
+  selector:
+    app: mysqld-exporter
+  ports:
+    - name: metrics
+      port: 9104
+      targetPort: 9104

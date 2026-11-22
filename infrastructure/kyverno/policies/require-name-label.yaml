@@ -1,0 +1,22 @@
+# Policy 6. Audit permanently: many upstream charts do not set this label, so Deny would mean
+# fighting them. Pods only, so each finding appears once.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: require-name-label
+spec:
+  validationActions:
+    - Audit
+  failurePolicy: Ignore
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+  autogen:
+    podControllers:
+      controllers: []
+  validations:
+    - expression: "'app.kubernetes.io/name' in object.metadata.?labels.orValue({})"
+      message: Pods should carry the app.kubernetes.io/name label.

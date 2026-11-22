@@ -1,0 +1,16 @@
+# backstage -- self-service portal at backstage.thales.internal (NIST on-demand self-service).
+# Source: github.com/jasonharker/backstage. Design: THALES-Backstage-Design (vault docs/).
+#   backstage.yaml  the app; Jenkins rewrites the `# backstage-image` line on green main builds
+#   postgres.yaml   its database (one database, a schema per plugin); backup.yaml the nightly pg_dump
+#   root-ca.yaml    THALES-Root-CA for LDAPS
+# Tenants it provisions live under tenants/, not here.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: backstage
+resources:
+  - namespace.yaml
+  - eso.yaml
+  - root-ca.yaml
+  - postgres.yaml
+  - backup.yaml
+  - backstage.yaml

@@ -1,0 +1,104 @@
+# Vault/ESO, the per-namespace pattern: read-only policy on secret/data/backstage/*,
+# Kubernetes-auth role backstage bound to this ServiceAccount, a namespaced SecretStore.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eso-backstage
+  namespace: backstage
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: vault-backstage
+  namespace: backstage
+spec:
+  provider:
+    vault:
+      server: http://vault.vault.svc:8200
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: backstage
+          serviceAccountRef:
+            name: eso-backstage
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: postgres-secret
+  namespace: backstage
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-backstage
+    kind: SecretStore
+  target:
+    name: postgres-secret
+    creationPolicy: Owner
+  data:
+    - secretKey: POSTGRES_DB
+      remoteRef:
+        key: backstage/postgres
+        property: POSTGRES_DB
+    - secretKey: POSTGRES_USER
+      remoteRef:
+        key: backstage/postgres
+        property: POSTGRES_USER
+    - secretKey: POSTGRES_PASSWORD
+      remoteRef:
+        key: backstage/postgres
+        property: POSTGRES_PASSWORD
+---
+# Everything else Backstage reads from its environment.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: backstage-env
+  namespace: backstage
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-backstage
+    kind: SecretStore
+  target:
+    name: backstage-env
+    creationPolicy: Owner
+  data:
+    - secretKey: AUTH_SESSION_SECRET
+      remoteRef:
+        key: backstage/backend
+        property: session-secret
+    - secretKey: AUTH_OIDC_CLIENT_ID
+      remoteRef:
+        key: backstage/oidc
+        property: client-id
+    - secretKey: AUTH_OIDC_CLIENT_SECRET
+      remoteRef:
+        key: backstage/oidc
+        property: client-secret
+    - secretKey: LDAP_BIND_PASSWORD
+      remoteRef:
+        key: backstage/ldap
+        property: password
+    - secretKey: GITHUB_APP_ID
+      remoteRef:
+        key: backstage/github-app
+        property: app-id
+    - secretKey: GITHUB_APP_CLIENT_ID
+      remoteRef:
+        key: backstage/github-app
+        property: client-id
+    - secretKey: GITHUB_APP_CLIENT_SECRET
+      remoteRef:
+        key: backstage/github-app
+        property: client-secret
+    - secretKey: GITHUB_APP_WEBHOOK_SECRET
+      remoteRef:
+        key: backstage/github-app
+        property: webhook-secret
+    - secretKey: GITHUB_APP_PRIVATE_KEY
+      remoteRef:
+        key: backstage/github-app
+        property: private-key

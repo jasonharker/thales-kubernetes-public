@@ -1,0 +1,17 @@
+---
+# Interfaces: THALES nodes carry two different NIC names. cp1/w1/w2 are eth0;
+# cp2/cp3/w3 — the three built later — are ens18. Re-verified per node on
+# 2026-08-21 against the address carrying 10.20.130.0/24. A regex written from
+# the older nodes alone silently excludes every node built since, and fails
+# open rather than erroring, so re-check whenever a node is added.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: thales-l2
+spec:
+  serviceSelector:
+    matchLabels: {}
+  interfaces:
+    - ^(eth0|ens18)$
+  externalIPs: false
+  loadBalancerIPs: true

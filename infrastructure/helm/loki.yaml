@@ -1,0 +1,78 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: loki
+  namespace: monitoring
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: loki
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+  values:
+    deploymentMode: SingleBinary
+    loki:
+      auth_enabled: false
+      commonConfig:
+        replication_factor: 1
+      storage:
+        type: filesystem
+      useTestSchema: true
+    singleBinary:
+      replicas: 1
+      persistence:
+        enabled: true
+        size: 10Gi
+        storageClass: ceph-rbd
+      # With no resources set loki inherited the monitoring LimitRange default
+      # (500m / 512Mi) and was OOMKilled against it; kubecost's 14d peak was
+      # 510Mi and CPU sat pinned at the 500m limit. Request stays at the
+      # LimitRange default, only the ceilings move.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+    backend:
+      replicas: 0
+    read:
+      replicas: 0
+    write:
+      replicas: 0
+    chunksCache:
+      enabled: false
+    # Requests below rightsized 2026-09-28 from kubecost requestSizingV2 (14d).
+    # canary/gateway/exporter inherited the LimitRange default of 100m / 128Mi.
+    lokiCanary:
+      resources:
+        requests:
+          cpu: 20m
+          memory: 64Mi
+    gateway:
+      resources:
+        requests:
+          cpu: 20m
+          memory: 32Mi
+    # The chart sizes memcached's request and limit off allocatedMemory
+    # (1.2 x 1024MB = 1229Mi, plus a 500m CPU request) -- the single largest
+    # request in the namespace, for a cache that peaked at 14Mi. Shrinking the
+    # cache itself rather than only the resources keeps memcached's -m below its
+    # limit, so it cannot grow into an OOMKill.
+    resultsCache:
+      allocatedMemory: 64
+      resources:
+        requests:
+          cpu: 10m
+          memory: 77Mi
+        limits:
+          memory: 77Mi
+    memcachedExporter:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi

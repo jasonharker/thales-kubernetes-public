@@ -1,0 +1,69 @@
+# Checks every change to the Flux repo: each Flux Kustomization must render with
+# `flux build`, its output must pass kubeconform, and no Secret may land unencrypted.
+# Runs on every PR and on every push to main, so image automation's direct pushes are
+# checked too. The checks are .github/scripts/flux_ci.py; its tests run in validator-tests.
+#
+# Residual: the repo is private on the free plan, so there is no branch protection and a
+# red run does not block a merge. Treat a red flux-ci as a blocker by convention.
+name: flux-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: flux-ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  KUBECONFORM_IMAGE: ghcr.io/yannh/kubeconform:latest
+
+jobs:
+  secrets:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - name: No unencrypted Secret in any tracked YAML file
+        run: python3 .github/scripts/flux_ci.py secrets-raw
+
+  manifests:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - uses: fluxcd/flux2/action@main
+      # --dry-run: no cluster. SOPS values come out masked as **SOPS**; nothing is decrypted.
+      - name: Render each Flux Kustomization
+        run: |
+          mkdir -p render
+          python3 .github/scripts/flux_ci.py targets \
+              clusters/thales/flux-system/gotk-sync.yaml clusters/thales/infrastructure-sync.yaml |
+          while read -r name path file; do
+            echo "::group::flux build $name ($path)"
+            flux build kustomization "$name" --path "$path" --kustomization-file "$file" --dry-run \
+              > "render/$name.yaml"
+            echo "$(grep -c '^kind:' "render/$name.yaml" || true) objects"
+            echo "::endgroup::"
+          done
+      # CRDs with no schema in the catalog are skipped, not validated; the summary counts them.
+      - name: Schemas (kubeconform + CRD catalog)
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w "$KUBECONFORM_IMAGE" \
+            -strict -summary -ignore-missing-schemas \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            render/
+      - name: No unencrypted Secret in the rendered output
+        run: python3 .github/scripts/flux_ci.py secrets-rendered render/*.yaml

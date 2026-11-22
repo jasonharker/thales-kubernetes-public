@@ -1,0 +1,32 @@
+creation_rules:
+  - path_regex: talos/talosconfig$
+    age: age1259k04x0dq48nz45z75gmdsjqxufp03x98vegr5lw7c5fn3fyezqhaaynq
+  - path_regex: talos/.*\.yaml$
+    age: age1259k04x0dq48nz45z75gmdsjqxufp03x98vegr5lw7c5fn3fyezqhaaynq
+  - path_regex: infrastructure/monitoring/.*\.yaml$
+    age: age1259k04x0dq48nz45z75gmdsjqxufp03x98vegr5lw7c5fn3fyezqhaaynq
+    encrypted_regex: ^(data|stringData)$
+  - path_regex: infrastructure/authentik/secrets/.*\.yaml$
+    age: age1259k04x0dq48nz45z75gmdsjqxufp03x98vegr5lw7c5fn3fyezqhaaynq
+    encrypted_regex: ^(data|stringData)$
+  - path_regex: infrastructure/cloudflared/secrets/.*\.yaml$
+    age: age1259k04x0dq48nz45z75gmdsjqxufp03x98vegr5lw7c5fn3fyezqhaaynq
+    encrypted_regex: ^(data|stringData)$
+  - path_regex: infrastructure/storage/secrets/.*\.yaml$
+    age: age1259k04x0dq48nz45z75gmdsjqxufp03x98vegr5lw7c5fn3fyezqhaaynq
+    encrypted_regex: ^(data|stringData)$
+  - path_regex: apps/guacamole/secrets/.*\.yaml$
+    age: age1zkddd2tr3czy4t0phk6hc5wjpws2vj029tp9fv2deymm46pav9wqqzsmxv
+    encrypted_regex: ^(data|stringData)$
+  - path_regex: apps/lemp/secrets/.*\.yaml$
+    age: age1zkddd2tr3czy4t0phk6hc5wjpws2vj029tp9fv2deymm46pav9wqqzsmxv
+    encrypted_regex: ^(data|stringData)$
+  - path_regex: apps/monitoring/secrets/.*\.yaml$
+    age: age1zkddd2tr3czy4t0phk6hc5wjpws2vj029tp9fv2deymm46pav9wqqzsmxv
+    encrypted_regex: ^(data|stringData)$
+  - path_regex: apps/media/secrets/.*\.yaml$
+    age: age1zkddd2tr3czy4t0phk6hc5wjpws2vj029tp9fv2deymm46pav9wqqzsmxv
+    encrypted_regex: ^(data|stringData)$
+  - path_regex: apps/ssot-tools/secrets/.*\.yaml$
+    age: age1zkddd2tr3czy4t0phk6hc5wjpws2vj029tp9fv2deymm46pav9wqqzsmxv
+    encrypted_regex: ^(data|stringData)$

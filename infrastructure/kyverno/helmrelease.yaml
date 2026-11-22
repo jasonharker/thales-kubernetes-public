@@ -1,0 +1,82 @@
+# Kyverno X.Y.Z -- the admission policy layer above Pod Security Admission and LimitRange,
+# both of which stay in place and keep working when Kyverno is down.
+#
+# forceFailurePolicyIgnore is deliberate: fail open. A fail-closed webhook makes every pod
+# create in scope depend on Kyverno, which is the wrong trade for a cold boot or a node loss
+# on a cluster with this little spare RAM. The cost is that a pod can slip in during an
+# outage, which is why KyvernoAdmissionUnavailable pages and background scans keep running.
+#
+# kube-system is report-only, and the two settings below are separate on purpose.
+# config.webhooks keeps the chart's namespaceSelector, so no kube-system admission request
+# passes through Kyverno and a Kyverno outage cannot slow Cilium or CoreDNS down.
+# resourceFiltersExcludeNamespaces removes the kube-system resourceFilter so background
+# scans can still report on it.
+#
+# Nothing else may dependsOn this Kustomization: apps waiting on Kyverno would bring back
+# the cold-boot coupling that failing open removes.
+#
+# The cleanup controller is off because no DeletingPolicy exists.
+#
+# ClusterPolicy is deprecated in 1.19 and removed in 1.20, so everything under policies/ is
+# CEL. The chart stays pinned; 1.20 is a deliberate upgrade.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kyverno
+  namespace: kyverno
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: kyverno
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: kyverno
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    features:
+      forceFailurePolicyIgnore:
+        enabled: true
+      policyExceptions:
+        enabled: true
+        namespace: kyverno
+
+    config:
+      resourceFiltersExcludeNamespaces:
+        - kube-system
+
+    admissionController:
+      replicas: 2
+      # The chart's anti-affinity is only preferred, so both replicas could share a node.
+      # A hard spread keeps one replica alive through a single worker loss.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: admission-controller
+              app.kubernetes.io/instance: kyverno
+      serviceMonitor:
+        enabled: true
+
+    backgroundController:
+      resources:
+        limits:
+          memory: 192Mi
+      serviceMonitor:
+        enabled: true
+
+    reportsController:
+      resources:
+        limits:
+          memory: 256Mi
+      serviceMonitor:
+        enabled: true
+
+    cleanupController:
+      enabled: false

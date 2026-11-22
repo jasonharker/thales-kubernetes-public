@@ -1,0 +1,28 @@
+# Secrets and sensitive data
+*.key
+*.pem
+*.crt
+*.env
+secrets/
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.config/
+keys.txt
+
+# Allow encrypted secrets in secrets/ directories
+!apps/**/secrets/*.yaml
+!infrastructure/**/secrets/*.yaml
+
+# Block any unencrypted secret files
+*secret*.txt
+*secret*.key
+*.env
+!talos/secrets/*.yaml

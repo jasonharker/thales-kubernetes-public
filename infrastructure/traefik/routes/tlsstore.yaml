@@ -1,0 +1,15 @@
+# Certificates for every router on websecure. No IngressRoute sets spec.tls -- the
+# websecure entrypoint enables TLS for all of them and Traefik picks a certificate by SNI
+# from this store. *.thales.internal is the default; *.apps.thales.internal covers Backstage
+# tenants. A example.com SNI on :443 gets a mismatch, which is fine because external
+# traffic arrives through cloudflared on web, never here.
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: traefik
+spec:
+  defaultCertificate:
+    secretName: wildcard-thales-local-tls
+  certificates:
+    - secretName: wildcard-apps-thales-local-tls

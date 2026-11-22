@@ -1,0 +1,175 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: allocator-code
+  namespace: ssot-tools
+data:
+  allocator.py: |
+    """allocator -- next free SSOT L#/I# number. Knative ksvc, scales to zero.
+
+    ponytail: stdlib only. Fetches all three source files fresh from GitHub on
+    every request instead of caching -- this runs a few times a week,
+    correctness beats speed, and a stale cache is exactly the kind of thing
+    that causes another near-collision.
+    """
+    import json
+    import os
+    import re
+    import sys
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    REPO = "jasonharker/thales-docs"
+    # SSOT.md is a source too, not just the two log files -- I#53 existed only as
+    # an inline citation there (Operational Services -> Jenkins row), with no
+    # entry in either numbered list. Missing that file reproduces the exact bug.
+    FILES = ["THALES-SSOT.md", "docs/THALES-Lessons-Learned.md", "docs/THALES-Issue-Log.md"]
+    TOKEN = os.environ.get("GITHUB_TOKEN", "")
+
+    LESSON_HEADING = re.compile(r"^####\s+(\d+)\.", re.MULTILINE)
+    ISSUE_LIST = re.compile(r"^(\d+)\.\s+(?:\*\*|~~\*\*)", re.MULTILINE)
+    INLINE_L = re.compile(r"L#(\d+)")
+    INLINE_I = re.compile(r"I#(\d+)")
+    # open issues are numbered in the SSOT's Known Issues, not the Issue Log.
+    # Only that section: Deployed Services and the Roadmap number their lists
+    # the same way.
+    KNOWN_ISSUES = re.compile(r"^###\s+Known Issues\s*$(.*?)(?=^#{1,3}\s|\Z)", re.MULTILINE | re.DOTALL)
+
+
+    def _fetch(path: str) -> str:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{REPO}/contents/{path}",
+            headers={
+                "Authorization": f"Bearer {TOKEN}",
+                "Accept": "application/vnd.github.raw+json",  # raw body, skip base64
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.read().decode()
+
+
+    def compute(ssot: str, lessons: str, issues: str) -> dict:
+        """Pure: given the three files' text, what's the next free L#/I#?
+        Testable offline -- see selftest."""
+        all_text = ssot + lessons + issues
+        l_heading = max((int(m) for m in LESSON_HEADING.findall(lessons)), default=0)
+        l_inline = max((int(m) for m in INLINE_L.findall(all_text)), default=0)
+        known = KNOWN_ISSUES.search(ssot)
+        listed = issues + (known.group(1) if known else "")
+        i_list = max((int(m) for m in ISSUE_LIST.findall(listed)), default=0)
+        i_inline = max((int(m) for m in INLINE_I.findall(all_text)), default=0)
+        # a citation higher than the list/heading max is the I#53 shape: a number
+        # already used somewhere with no list entry backing it. Trusting the
+        # list alone would hand that number out again.
+        warn = l_inline > l_heading or i_inline > i_list
+        return {
+            "next_L": max(l_heading, l_inline) + 1,
+            "next_I": max(i_list, i_inline) + 1,
+            "L_from_heading": l_heading,
+            "L_from_inline_citation": l_inline,
+            "I_from_list": i_list,
+            "I_from_inline_citation": i_inline,
+            "warning": (
+                "an inline citation exceeds the numbered list for at least one "
+                "sequence -- check by hand before using this number"
+                if warn else None
+            ),
+        }
+
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            try:
+                ssot, lessons, issues = (_fetch(p) for p in FILES)
+                body = json.dumps(compute(ssot, lessons, issues), indent=2).encode()
+                code = 200
+            except Exception as exc:  # ponytail: one endpoint, one try/except is enough
+                body = json.dumps({"error": str(exc)}).encode()
+                code = 502
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, fmt, *args):  # quiet -- queue-proxy already logs access
+            pass
+
+
+    def selftest():
+        lessons = "#### 106. Foo (date)\n\n#### 107. Bar (date)\n"
+        issues = "59. **closed**: text\n60. ~~**closed**~~: text\n"
+
+        # consistent case: nothing cited beyond what's already in the lists
+        ssot = "cites L#107 and I#60 elsewhere, nothing higher"
+        out = compute(ssot, lessons, issues)
+        assert out["next_L"] == 108, out
+        assert out["next_I"] == 61, out
+        assert out["warning"] is None, out
+
+        # the I#53 shape: an inline citation with no list entry, higher than the list max
+        ssot2 = "an orphan citation I#65 exists nowhere else"
+        out2 = compute(ssot2, lessons, issues)
+        assert out2["next_I"] == 66, out2
+        assert out2["warning"] is not None, out2
+
+        # open issues listed in the SSOT's Known Issues count as list entries;
+        # numbered lists in other SSOT sections do not
+        ssot3 = (
+            "### Known Issues\n\n62. **open** -- see I#62\n\n---\n\n"
+            "## Future Roadmap\n\n### Longer-Term\n90. **roadmap item**\n"
+        )
+        out3 = compute(ssot3, lessons, issues)
+        assert out3["I_from_list"] == 62, out3
+        assert out3["next_I"] == 63, out3
+        assert out3["warning"] is None, out3
+
+        print("allocator selftest OK")
+
+
+    if __name__ == "__main__":
+        if "--selftest" in sys.argv:
+            selftest()
+            sys.exit(0)
+        ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: allocator
+  namespace: ssot-tools
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: allocator
+    spec:
+      containers:
+        - image: python
+          command: ["python3", "/app/allocator.py"]
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: allocator-github-token
+                  key: token
+          volumeMounts:
+            - name: code
+              mountPath: /app
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+      volumes:
+        - name: code
+          configMap:
+            name: allocator-code

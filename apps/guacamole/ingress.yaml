@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  name: guacamole-ingress
+  namespace: guacamole
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: guacamole.example.com
+    http:
+      paths:
+      - backend:
+          service:
+            name: guacamole
+            port:
+              number: 8080
+        path: /
+        pathType: Prefix
+

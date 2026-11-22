@@ -1,0 +1,78 @@
+# Backstage tenant PRs: validate, then merge -- no human in the loop (NIST on-demand
+# self-service). Runs only for PRs opened by the Backstage GitHub App; every other PR is
+# untouched. The control is .github/scripts/validate_tenant.py: read it before changing
+# anything here. Design: THALES-Backstage-Design (vault docs/).
+#
+# The gate runs from the base branch, never from the PR: the App has Contents: write, so a
+# PR could edit .github/scripts/ and have its own gate approve it. The App has no Workflows
+# permission, so it cannot edit this file. Everything else read from the checkout (the
+# Kyverno policies) is outside the tenant paths, so the base gate rejects a PR that changes it.
+#
+# Residual: the repo is private on the free plan, so there is no branch protection and the
+# App's Contents: write could push to main directly.
+name: tenant-pr
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: tenant-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.event.pull_request.user.login == vars.BACKSTAGE_BOT_LOGIN
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml==X.Y.Z
+      - name: Paths, registry entry, rendered shape
+        id: gate
+        run: |
+          git show "origin/${{ github.base_ref }}:.github/scripts/validate_tenant.py" > "$RUNNER_TEMP/gate.py"
+          python3 "$RUNNER_TEMP/gate.py" "origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+      - name: Schemas (kubeconform + CRD catalog)
+        if: hashFiles('render.yaml') != ''
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w ghcr.io/yannh/kubeconform:vX.Y.Z \
+            -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            render.yaml "tenants/registry/${{ steps.gate.outputs.name }}.yaml"
+      # The cluster's Deny set, less require-memory-limits: that one is Pods-only with no
+      # autogen, so it never fires on a rendered Deployment. Tenant memory is covered by the
+      # template's LimitRange and by the policy at admission. Knative Services get no
+      # autogen either; their Pods are checked at admission only.
+      - name: Kyverno policies (the cluster's Deny set)
+        if: hashFiles('render.yaml') != ''
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w ghcr.io/kyverno/kyverno-cli:vX.Y.Z apply \
+            infrastructure/kyverno/policies/disallow-latest-tag.yaml \
+            infrastructure/kyverno/policies/restrict-host-namespaces.yaml \
+            infrastructure/kyverno/policies/restrict-image-registries.yaml \
+            infrastructure/kyverno/policies/restrict-privileged.yaml \
+            --resource render.yaml
+
+  merge:
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Merge the validated head commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh pr merge "${{ github.event.pull_request.number }}"
+          --repo "${{ github.repository }}"
+          --squash --delete-branch
+          --match-head-commit "${{ github.event.pull_request.head.sha }}"

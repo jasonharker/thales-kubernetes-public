@@ -1,0 +1,104 @@
+# The site. Stateless; reads only what the nightly resolve swapped in. Every pod runs
+# the embedded migrations on start (serialized by an advisory lock), so a new image's
+# schema lands before it serves.
+#
+# `:pending` until Jenkins's first main build rewrites the image line; until then the
+# pods sit in ImagePullBackOff, which is expected.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: citypulse
+  namespace: city-pulse
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: citypulse
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: citypulse
+        app: citypulse
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: citypulse
+          image: 10.20.120.31:5000/city-pulse:4d0c1db7 # city-pulse-image
+          args: ["serve", "-addr", ":8080"]
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+            - name: DATABASE_URL
+              value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: citypulse
+  namespace: city-pulse
+  labels:
+    app: citypulse
+spec:
+  selector:
+    app: citypulse
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# /metrics reports the nightly CronJob's runs (a Job can't be scraped); both replicas
+# read the same source_runs rows, so aggregate with max(). Alert rule:
+# infrastructure/monitoring/city-pulse-alerts.yaml.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: citypulse
+  namespace: city-pulse
+spec:
+  selector:
+    matchLabels:
+      app: citypulse
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 1m

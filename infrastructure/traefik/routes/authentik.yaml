@@ -1,0 +1,32 @@
+# authentik.example.com — ported from /etc/traefik/dynamic/authentik.yml on CT 103.
+#
+# ⚠️ NEVER put authentik-forwardauth on this route. Authentik authenticating against
+# itself is an infinite redirect loop (SSOT §6).
+#
+# https-headers IS required: Cloudflare terminates TLS, so Traefik sees http:// from
+# cloudflared, and Authentik builds its redirect URIs from X-Forwarded-Proto. Without
+# it the flow redirects to http:// and breaks. The LXC calls this middleware
+# `authentik-https-header`; it is the same header, renamed on the port.
+#
+# The outpost callback IngressRoute already matches PathPrefix(/outpost.goauthentik.io/)
+# at priority 100 on any Host, and sends it to this same backend — so it wins for that
+# path here too, which is correct.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`authentik.example.com`) || Host(`authentik.thales.internal`)
+      kind: Rule
+      middlewares:
+        - name: https-headers
+          namespace: traefik
+      services:
+        - name: authentik-server
+          namespace: authentik
+          port: 9000

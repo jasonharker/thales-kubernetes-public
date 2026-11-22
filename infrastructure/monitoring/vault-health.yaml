@@ -1,0 +1,41 @@
+# Vault seals on every restart and unseal stays manual (Shamir 3/2, by decision).
+# /v1/sys/health answers 200 only when initialized, unsealed and active -- 503 sealed,
+# 501 uninitialized -- so blackbox's default http_2xx module turns a sealed or dead
+# Vault into a Discord alert instead of ESO sync errors in other namespaces.
+apiVersion: monitoring.coreos.com/v1
+kind: Probe
+metadata:
+  name: vault-health
+  namespace: monitoring
+  labels:
+    release: prometheus # matches Prometheus's probeSelector
+spec:
+  jobName: vault-health
+  interval: 30s
+  module: http_2xx
+  prober:
+    url: blackbox-exporter.monitoring.svc:9115
+  targets:
+    staticConfig:
+      static:
+        - http://vault.vault.svc:8200/v1/sys/health
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: vault-health
+  namespace: monitoring
+  labels:
+    release: prometheus # matches Prometheus's ruleSelector
+spec:
+  groups:
+    - name: vault-health
+      rules:
+        - alert: VaultSealedOrDown
+          expr: probe_success{job="vault-health"} == 0 or absent(probe_success{job="vault-health"})
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Vault is sealed, uninitialized or unreachable"
+            description: "/v1/sys/health has not returned 200 for 2m. If the pod restarted it needs a manual `vault operator unseal` (2 of 3 keys); until then every ESO SecretStore stops refreshing."

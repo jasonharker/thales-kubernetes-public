@@ -1,0 +1,25 @@
+# *.knative.thales.internal -> Kourier, in-cluster ingress for Knative Serving.
+#
+# Wildcard is single-label only (Traefik v3 Host() rule): matches foo-bar.knative.thales.internal,
+# not foo.bar.knative.thales.internal. Pairs with the flattened domain-template in
+# infrastructure/knative/serving/config-patches.yaml -- Knative's default two-label template
+# would silently 404 here.
+#
+# kourier-internal, not kourier: kourier is the external Service, patched LoadBalancer ->
+# ClusterIP since it isn't used (see infrastructure/knative/README.md). kourier-internal's
+# port 80 targets containerPort 8081 inside the pod.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: knative
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`*.knative.thales.internal`)
+      kind: Rule
+      services:
+        - name: kourier-internal
+          namespace: kourier-system
+          port: 80

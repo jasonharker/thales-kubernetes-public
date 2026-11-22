@@ -1,0 +1,27 @@
+# Adopted into Flux August 21, 2026. This Service was hand-applied on 2025-09-28
+# and had never been in git: it carried kubectl's last-applied-configuration
+# annotation and no Flux labels, so `prune: true` could never reach it and no
+# reconcile ever corrected it. Its Deployment, in the same namespace, WAS managed.
+#
+# Third instance of incident #31 (after infrastructure-lxcs and the pihole-dns
+# remnant). Found only because a NodePort change needed a file to edit and there
+# was none — which is the point of #31's rule: audit from the live API, never from
+# the repo, because the repo cannot show you what was never committed to it.
+#
+# ClusterIP, not NodePort: internal access is grafana.thales.internal:30880 through
+# the in-cluster Traefik as of August 21, 2026.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  type: ClusterIP
+  selector:
+    app: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      protocol: TCP

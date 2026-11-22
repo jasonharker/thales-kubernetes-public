@@ -1,0 +1,68 @@
+# `citypulse nightly`: full snapshot of all four sources (~15 min), then the resolve
+# rebuild (~1.5 min), swapped in one transaction. A failed source is retried the next
+# night rather than now -- sources fail independently and the rest still resolve.
+# Measured peaks: resolve 880 MB RSS, ingest 530 MB.
+#
+# The pod label app: citypulse-nightly is what the egress policy grants world :443 to
+# (southernnevadahealthdistrict.org, maps.clarkcountynv.gov, services1.arcgis.com).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: citypulse-nightly
+  namespace: city-pulse
+spec:
+  schedule: "0 3 * * *"
+  timeZone: America/Los_Angeles
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 7200
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: citypulse-nightly
+            app: citypulse-nightly
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: citypulse
+              image: 10.20.120.31:5000/city-pulse:4d0c1db7 # city-pulse-image
+              args: ["nightly"]
+              env:
+                - name: POSTGRES_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_USER
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_PASSWORD
+                - name: POSTGRES_DB
+                  valueFrom:
+                    secretKeyRef:
+                      name: postgres-secret
+                      key: POSTGRES_DB
+                - name: DATABASE_URL
+                  value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres:5432/$(POSTGRES_DB)?sslmode=disable
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 768Mi
+                limits:
+                  cpu: "1"
+                  memory: 1536Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]

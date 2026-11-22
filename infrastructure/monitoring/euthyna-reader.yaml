@@ -1,0 +1,71 @@
+# Read-only access for euthyna's daily export on the aristides LXC (CT 126).
+#
+# euthyna reads cluster events and current Alertmanager alerts, nothing else.
+# The kubeconfig on the LXC carries the token from the Secret below, which
+# does not rotate. That is acceptable only because these roles cannot read
+# secrets or change anything in the cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: euthyna-reader
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: euthyna-reader-events
+rules:
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: euthyna-reader-events
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: euthyna-reader-events
+subjects:
+  - kind: ServiceAccount
+    name: euthyna-reader
+    namespace: monitoring
+---
+# The API server authorizes the service proxy against the name as it appears
+# in the URL, so the resource name must include the :9093 port.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: euthyna-reader-alertmanager
+  namespace: monitoring
+rules:
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    resourceNames: ["prometheus-kube-prometheus-alertmanager:9093"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: euthyna-reader-alertmanager
+  namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: euthyna-reader-alertmanager
+subjects:
+  - kind: ServiceAccount
+    name: euthyna-reader
+    namespace: monitoring
+---
+# Non-expiring token for the SA above. Kubernetes fills in .data.token inside
+# the cluster, so this manifest declares the Secret and carries no value.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: euthyna-reader-token
+  namespace: monitoring
+  annotations:
+    kubernetes.io/service-account.name: euthyna-reader
+type: kubernetes.io/service-account-token

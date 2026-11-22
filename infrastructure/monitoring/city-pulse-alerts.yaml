@@ -1,0 +1,27 @@
+# city-pulse: a source that has not ingested successfully in 3 days. Sources fail
+# independently (an agency's ArcGIS server returning 500 for an evening is normal), so a
+# single failed night is not an alert; three is a format change or a moved endpoint.
+# The metric comes from serve's /metrics, which reads source_runs for the CronJob.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: city-pulse
+  namespace: monitoring
+  labels:
+    release: prometheus # matches Prometheus's ruleSelector
+spec:
+  groups:
+    - name: city-pulse
+      rules:
+        - alert: CityPulseSourceStale
+          expr: time() - max by (source) (citypulse_source_last_success_timestamp_seconds) > 3 * 86400
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "city-pulse source {{ $labels.source }} has not ingested in 3 days"
+            description: >-
+              No successful `citypulse nightly` run for {{ $labels.source }} since
+              {{ $value | humanizeDuration }} ago. Check the CronJob's last pod logs in
+              namespace city-pulse (kubectl -n city-pulse logs job/<latest>) for the source's
+              error; the other sources keep updating.

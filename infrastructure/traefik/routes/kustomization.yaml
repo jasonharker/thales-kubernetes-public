@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - eso-traefik-serviceaccount.yaml
+  - eso-traefik-secretstore.yaml
+  - eso-traefik-externalsecret.yaml
+  - eso-traefik-apps-wildcard.yaml
+  - tlsstore.yaml
+  - middlewares.yaml
+  - ingressroute-outpost.yaml
+  - jenkins.yaml
+  - authentik.yaml
+  - archive.yaml
+  - portfolio.yaml
+  - portfolio-staging.yaml
+  - city-pulse.yaml
+  - grafana.yaml
+  - guacamole.yaml
+  - dashboard.yaml
+  - vault.yaml
+  - hubble.yaml
+  - knative.yaml
+  - hestia.yaml
+  - kubecost.yaml
+  - nextcloud.yaml
+  - jaeger.yaml
+  - backstage.yaml
+# Every route also answers on websecure (HTTPS, *.thales.internal wildcard via tlsstore.yaml).
+# Patched here rather than in 25 files. No http->https redirect yet: an app with an http://
+# URL configured for itself (OAuth redirect URI, root_url) could break, so check each first.
+patches:
+  - target:
+      kind: IngressRoute
+    patch: |-
+      - op: add
+        path: /spec/entryPoints/-
+        value: websecure

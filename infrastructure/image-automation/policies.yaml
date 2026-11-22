@@ -1,0 +1,6 @@
+# Minor and patch updates only. Each range starts at the version pinned when this was added.
+# navidrome is not automated: bump it by hand.
+#
+# linuxserver tags are not semver. filterTags rewrites them for sorting only, moving the build
+# and ls numbers into numeric prerelease fields; the policy still resolves to the original tag.
+# The -0 bounds are what let the semver range match prerelease versions at all.

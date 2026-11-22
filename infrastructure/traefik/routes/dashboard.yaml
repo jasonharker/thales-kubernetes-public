@@ -1,0 +1,33 @@
+# Traefik's own dashboard — ported from /etc/traefik/dynamic/dashboard.yml on CT 103.
+#
+# api.insecure stays false and the chart's built-in dashboard IngressRoute stays
+# disabled; this is the explicit router to api@internal that SSOT Traefik lesson #11
+# requires. Without it the API has no router at all and the traefik entrypoint 404s,
+# which is why the in-cluster router table could not be introspected until now.
+#
+# Two hostnames deliberately:
+#   traefik-k8s.thales.internal  — reachable today, while CT 103 still owns the other name
+#   traefik.thales.internal      — inert until the AD record is repointed at cutover
+# Matching both now means the cutover is a DNS change alone, with no manifest edit.
+#
+# lan-only depends on externalTrafficPolicy: Local. Under the default Cluster policy
+# every request would arrive from a node address inside 10.0.0.0/8 and the allowlist
+# would admit the entire internet.
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: dashboard
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`traefik-k8s.thales.internal`) || Host(`traefik.thales.internal`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+      services:
+        - name: api@internal
+          kind: TraefikService

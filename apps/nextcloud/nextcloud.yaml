@@ -1,0 +1,154 @@
+# Nextcloud, pinned to a specific patch. The pin is load-bearing: Nextcloud only
+# supports upgrading ONE major version at a time, so a floating tag that jumps 34→36
+# leaves an installation that cannot migrate itself and must be rebuilt.
+#
+# TRUSTED_PROXIES is the whole of the proxy handling, and it is enough:
+#   - cloudflared sets X-Forwarded-Proto: https on requests it originates
+#   - Traefik's `web` entrypoint trusts that header (ports.web.forwardedHeaders
+#     .trustedIPs in infrastructure/traefik/helmrelease.yaml lists the Cloudflare
+#     edge ranges plus the pod CIDR 10.244.0.0/16)
+#   - LAN requests hitting the 10.20.130.100 LoadBalancer directly carry no such
+#     header, so Traefik reports http
+# One route therefore serves both hostnames at their correct protocol.
+#
+# ⚠️ Do NOT add OVERWRITEPROTOCOL or OVERWRITEHOST. Either one hard-codes a single
+# protocol/hostname and breaks whichever of the two hostnames it wasn't set for.
+# For the same reason this app's IngressRoute must not carry the https-headers
+# middleware — see infrastructure/traefik/routes/nextcloud.yaml.
+#
+# strategy: Recreate for the RWO-single-attach reason described in
+# postgres-deployment.yaml.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    secret.reloader.stakater.com/auto: "true"
+  name: nextcloud
+  namespace: nextcloud
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nextcloud
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nextcloud
+        app: nextcloud
+    spec:
+      containers:
+        - name: nextcloud
+          image: nextcloud
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: POSTGRES_PASSWORD
+            - name: REDIS_HOST
+              value: redis
+            - name: NEXTCLOUD_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: NEXTCLOUD_ADMIN_USER
+            - name: NEXTCLOUD_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nextcloud-secret
+                  key: NEXTCLOUD_ADMIN_PASSWORD
+            # Space-separated. Both hostnames, or the other one returns
+            # "Access through untrusted domain".
+            - name: NEXTCLOUD_TRUSTED_DOMAINS
+              value: "nextcloud.thales.internal nextcloud.example.com"
+            # Pod CIDR — the Traefik pods are the immediate peer.
+            - name: TRUSTED_PROXIES
+              value: "10.244.0.0/16"
+            - name: PHP_MEMORY_LIMIT
+              value: "512M"
+            # Cloudflare caps a single request body at 100MB, so large uploads
+            # arrive chunked; this is the limit for assembling them, not per-request.
+            - name: PHP_UPLOAD_LIMIT
+              value: "16G"
+          ports:
+            - containerPort: 80
+              protocol: TCP
+          # First boot unpacks the whole application into the empty RBD volume and
+          # runs the installer, which takes minutes. The startupProbe is what stops
+          # livenessProbe from killing the pod mid-install: up to 30 x 20s = 10min.
+          startupProbe:
+            httpGet:
+              path: /status.php
+              port: 80
+              httpHeaders:
+                - name: Host
+                  value: nextcloud.thales.internal
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /status.php
+              port: 80
+              httpHeaders:
+                - name: Host
+                  value: nextcloud.thales.internal
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /status.php
+              port: 80
+              httpHeaders:
+                - name: Host
+                  value: nextcloud.thales.internal
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          volumeMounts:
+            # The whole webroot, not just /data — the image populates this on
+            # first start and expects to own it.
+            - name: nextcloud-data
+              mountPath: /var/www/html
+      volumes:
+        - name: nextcloud-data
+          persistentVolumeClaim:
+            claimName: nextcloud-data-rbd
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+spec:
+  type: ClusterIP
+  selector:
+    app: nextcloud
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP

@@ -1,0 +1,71 @@
+---
+# BGP peering with leonidas (pfSense), added 2026-08-23 for the Sprint 5
+# evaluation. This ADDS a path; it does not replace one. thales-l2 keeps
+# answering ARP for the VIP, so anything already on VLAN 130 is unaffected and
+# rollback is deleting this file.
+#
+# v2, matching lb-ippool.yaml. The L2 policy next door is still v2alpha1 — the
+# two genuinely differ, so verify against the live CRD rather than by analogy.
+apiVersion: cilium.io/v2
+kind: CiliumBGPClusterConfig
+metadata:
+  name: thales
+spec:
+  # Workers only. Traefik is a DaemonSet on w1-w3 and its Service is
+  # externalTrafficPolicy: Local, so only those three can ever advertise the
+  # VIP; peering the control planes would open three sessions that never carry
+  # a route and would force a new pfSense alias. This selector matches the
+  # existing K8S_WORKERS alias (10.20.130.21-.23) member-for-member.
+  nodeSelector:
+    matchExpressions:
+      - key: node-role.kubernetes.io/control-plane
+        operator: DoesNotExist
+  bgpInstances:
+    - name: thales
+      localASN: 65002
+      peers:
+        - name: leonidas
+          peerASN: 65001
+          peerAddress: 10.20.130.1
+          peerConfigRef:
+            name: leonidas
+---
+apiVersion: cilium.io/v2
+kind: CiliumBGPPeerConfig
+metadata:
+  name: leonidas
+spec:
+  # 3/9 rather than the 60/180 default. The whole point of the evaluation is
+  # measuring failover against L2 leader election, and 180s of hold time would
+  # dominate the number being measured.
+  timers:
+    keepAliveTimeSeconds: 3
+    holdTimeSeconds: 9
+  gracefulRestart:
+    enabled: true
+    restartTimeSeconds: 15
+  families:
+    - afi: ipv4
+      safi: unicast
+      advertisements:
+        matchLabels:
+          advertise: bgp
+---
+# LoadBalancer IPs only. NOT PodCIDR: pods are masqueraded behind node addresses
+# today, and un-masquerading to make pod IPs routable would source pod egress
+# from 10.244.x.x into an opt3 ruleset whose permits are all written against
+# node addresses — silent, application-layer breakage of the L#86 shape.
+apiVersion: cilium.io/v2
+kind: CiliumBGPAdvertisement
+metadata:
+  name: services
+  labels:
+    advertise: bgp
+spec:
+  advertisements:
+    - advertisementType: Service
+      service:
+        addresses:
+          - LoadBalancerIP
+      selector:
+        matchLabels: {}

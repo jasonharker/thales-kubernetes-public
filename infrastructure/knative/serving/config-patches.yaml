@@ -1,0 +1,145 @@
+# Strategic-merge patches over the vendored serving-core.yaml / kourier.yaml.
+# Never edit those files directly -- see ../README.md upgrade procedure.
+
+# Default ingress-class is Istio; Kourier route silently never fires without this.
+# Default domain-template is "{{.Name}}.{{.Namespace}}.{{.Domain}}" (two labels) --
+# flattened to one label to fit Traefik's single-level Host(*.x) wildcard match.
+# These two changes are load-bearing together (see infrastructure/knative/README.md
+# and infrastructure/traefik/routes/knative.yaml) -- do not apply one without the other.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-network
+  namespace: knative-serving
+data:
+  ingress-class: kourier.ingress.networking.knative.dev
+  domain-template: "{{.Name}}-{{.Namespace}}.{{.Domain}}"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-domain
+  namespace: knative-serving
+data:
+  knative.thales.internal: ""
+---
+# thales-pool has an empty serviceSelector, so it grabs every LoadBalancer Service --
+# Kourier sits behind Traefik on 10.20.130.100 instead, so this must not take a pool IP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kourier
+  namespace: kourier-system
+spec:
+  type: ClusterIP
+---
+# Downward-API env in a ksvc podspec is rejected unless this is enabled (default "disabled").
+# pythia needs spec.nodeName. Upstream warns this cannot be safely *disabled* once enabled --
+# meaning any ksvc later relying on fieldRef breaks if it is turned back off.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-features
+  namespace: knative-serving
+data:
+  kubernetes.podspec-fieldref: "enabled"
+---
+# Request rightsizing 2026-09-28 from kubecost requestSizingV2 (14d): every
+# control-plane pod here peaked under 15m CPU against 100-300m requests.
+# Requests only -- upstream limits are untouched. activator and webhook carry
+# CPU-utilisation HPAs, so a lower request means they scale out sooner; at
+# single-digit millicore usage that is still one replica.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: activator
+  namespace: knative-serving
+spec:
+  template:
+    spec:
+      containers:
+        - name: activator
+          resources:
+            requests:
+              cpu: 50m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoscaler
+  namespace: knative-serving
+spec:
+  template:
+    spec:
+      containers:
+        - name: autoscaler
+          resources:
+            requests:
+              cpu: 50m
+              memory: 80Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller
+  namespace: knative-serving
+spec:
+  template:
+    spec:
+      containers:
+        - name: controller
+          resources:
+            requests:
+              cpu: 50m
+              memory: 80Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webhook
+  namespace: knative-serving
+spec:
+  template:
+    spec:
+      containers:
+        - name: webhook
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: net-kourier-controller
+  namespace: knative-serving
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: net-kourier-controller
+    spec:
+      containers:
+        - name: controller
+          resources:
+            requests:
+              cpu: 50m
+              memory: 144Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: 3scale-kourier-gateway
+  namespace: kourier-system
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: 3scale-kourier-gateway
+    spec:
+      containers:
+        - name: kourier-gateway
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi

@@ -1,0 +1,66 @@
+# Reloader X.Y.Z (app vX.Y.Z) -- restarts workloads when an ESO-managed Secret changes,
+# so a Vault rotation reaches pods that read it as env (secretKeyRef is resolved at pod
+# start). SEC-01 rotation groundwork.
+#
+# Opt-in only: a workload must carry secret.reloader.stakater.com/auto: "true".
+# Database servers are deliberately NOT annotated -- their password env is read at initdb
+# only, so a restart rotates nothing and costs an outage.
+#
+# watchGlobally: false + namespaces: the chart creates a namespaced Role per listed
+# namespace instead of a ClusterRole that can read every Secret in the cluster. A new
+# namespace with annotated workloads must be added to the list or nothing happens.
+#
+# reloadStrategy: annotations -- Reloader stamps a pod-template annotation rather than
+# injecting a STAKATER_* env var, so Flux-owned container specs are left alone.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: reloader
+  labels:
+    app.kubernetes.io/managed-by: flux
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: stakater
+  namespace: reloader
+spec:
+  interval: 1h
+  url: https://stakater.github.io/stakater-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: reloader
+  namespace: reloader
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: reloader
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: stakater
+  values:
+    reloader:
+      watchGlobally: false
+      namespaces:
+        - authentik
+        - cloudflared
+        - guacamole
+        - lemp
+        - media
+        - monitoring
+        - nextcloud
+      ignoreConfigMaps: true
+      reloadStrategy: annotations
+      deployment:
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi

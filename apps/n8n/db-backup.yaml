@@ -1,0 +1,51 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: n8n-backup
+  namespace: n8n
+spec:
+  schedule: "0 1 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: n8n-backup
+        spec:
+          restartPolicy: Never
+          affinity:
+            podAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchLabels:
+                    app: n8n
+                topologyKey: kubernetes.io/hostname
+          containers:
+          - name: sqlite-backup
+            image: alpine
+            command: ["/bin/sh", "-c"]
+            args:
+            - |
+              set -eu
+              apk add --no-cache sqlite
+              sqlite3 /data/.n8n/database.sqlite ".backup /backups/n8n-$(date +%F).sqlite"
+              gzip -f /backups/n8n-$(date +%F).sqlite
+              find /backups -name "*.sqlite.gz" -mtime +7 -delete
+              ls -lh /backups
+            volumeMounts:
+            - name: n8n-data
+              mountPath: /data
+              readOnly: true
+            - name: backups
+              mountPath: /backups
+          volumes:
+          - name: n8n-data
+            persistentVolumeClaim:
+              claimName: n8n-data-rbd
+          - name: backups
+            persistentVolumeClaim:
+              claimName: db-backups-rbd

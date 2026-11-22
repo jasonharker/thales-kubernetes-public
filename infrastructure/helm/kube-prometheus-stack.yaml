@@ -1,0 +1,334 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  interval: 10m
+  timeout: 15m
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: X.Y.Z
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+  valuesFrom:
+    - kind: Secret
+      name: alertmanager-discord-webhook
+      valuesKey: webhook-url
+      targetPath: alertmanager.config.receivers[1].discord_configs[0].webhook_url
+    - kind: Secret
+      name: alertmanager-discord-webhook
+      valuesKey: webhook-url
+      targetPath: alertmanager.config.receivers[2].discord_configs[0].webhook_url
+  values:
+    alertmanager:
+      enabled: true
+      # alertmanagerSpec added 2026-09-03: Alertmanager had no storage at all
+      # and ran on emptyDir, so active silences and notification state were
+      # discarded on every pod restart -- a silence set during an incident did
+      # not survive the restart it was often set for.
+      alertmanagerSpec:
+        storage:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: ceph-rbd
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 2Gi
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+      config:
+        route:
+          receiver: 'discord'
+          group_by: ['alertname']
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 12h
+          routes:
+            # KubeSchedulerDown / KubeControllerManagerDown are permanent
+            # Talos artifacts (both components bind 127.0.0.1 only and can
+            # never be scraped), not real faults — muted here rather than
+            # touched at the rule-generation level (OBS-01).
+            - matchers:
+                - alertname =~ "KubeSchedulerDown|KubeControllerManagerDown"
+              receiver: 'null'
+              continue: false
+            # Generic TargetDown fires for the same permanent Talos
+            # artifact (job label, not the alertname above) — same mute.
+            - matchers:
+                - alertname = "TargetDown"
+                - job =~ "kube-scheduler|kube-controller-manager"
+              receiver: 'null'
+              continue: false
+            # Watchdog is the intentional always-firing dead-man's-switch
+            # (see its own annotation) — meant for a DeadMansSnitch-style
+            # integration, not a Discord ping every repeat_interval.
+            - matchers:
+                - alertname = "Watchdog"
+              receiver: 'null'
+              continue: false
+            # NetworkPolicyDropping's own description already gives the exact PromQL to name
+            # the culprit -- an LLM triage call pulling pod status/events/logs adds nothing,
+            # and this alert alone drove ~70% of the triage workflow's executions over 13 days
+            # (2026-09-21). Discord-only receiver, same mute-list pattern, skips the n8n webhook.
+            - matchers:
+                - alertname = "NetworkPolicyDropping"
+              receiver: 'discord-noai'
+              continue: false
+            # KubeQuotaAlmostFull exception: it's severity=info like the
+            # rest of this block, but monitoring-quota has hit its cap
+            # silently before and frozen rolling updates with no error —
+            # the one info alert that has already caused an incident.
+            # Route it to discord before the blanket mute below catches it.
+            - matchers:
+                - alertname = "KubeQuotaAlmostFull"
+              receiver: 'discord'
+              continue: false
+            # info-severity alerts (CPUThrottlingHigh, ...) are noise on
+            # their own — they exist to add context to a warning/critical
+            # alert on the same namespace, not to page anyone by
+            # themselves. Same for InfoInhibitor, whose only job is
+            # inhibiting those info alerts; it has no informational value
+            # of its own. Mute both, same pattern as above.
+            - matchers:
+                - severity = "info"
+              receiver: 'null'
+              continue: false
+            - matchers:
+                - alertname = "InfoInhibitor"
+              receiver: 'null'
+              continue: false
+        receivers:
+          - name: 'null'
+          - name: 'discord'
+            discord_configs:
+              # webhook_url substituted via spec.valuesFrom above — sourced
+              # from Vault via ExternalSecret, never committed to git.
+              - webhook_url: 'PLACEHOLDER_SET_VIA_VALUESFROM'
+            # Everything that survives the mutes above is ALSO posted to the
+            # n8n alert-triage workflow, which pulls live pod status, events
+            # and logs for the alerting object, asks a model for a verdict,
+            # and posts that to #thales-triage. Added to this receiver rather
+            # than as a parallel route so the mute list above stays the single
+            # place deciding what is worth a human's attention.
+            webhook_configs:
+              - url: 'http://n8n.n8n.svc.cluster.local:5678/webhook/alert-triage'
+                send_resolved: false
+          - name: 'discord-noai'
+            discord_configs:
+              # webhook_url substituted via spec.valuesFrom above.
+              - webhook_url: 'PLACEHOLDER_SET_VIA_VALUESFROM'
+    # kube-proxy was removed on 2026-08-21 when Cilium took over with
+    # kubeProxyReplacement. Left enabled, the chart keeps a kube-proxy
+    # ServiceMonitor and the KubeProxyDown rule, which fires as a permanent
+    # critical false positive against a component that no longer exists.
+    kubeProxy:
+      enabled: false
+    grafana:
+      enabled: false
+    nodeExporter:
+      enabled: true
+    # Requests below rightsized 2026-09-28 from kubecost requestSizingV2 (14d).
+    # These containers had no resources set and inherited the monitoring
+    # LimitRange default of 100m / 128Mi while peaking at 1-44m / 24-63Mi.
+    # Requests only; limits keep coming from the LimitRange default.
+    prometheusOperator:
+      resources:
+        requests:
+          cpu: 70m
+          memory: 80Mi
+      # config-reloader sidecar in both the Prometheus and Alertmanager pods
+      prometheusConfigReloader:
+        resources:
+          requests:
+            cpu: 10m
+            memory: 48Mi
+    kube-state-metrics:
+      # gotk_resource_info for the FluxResourceNotReady alert (infrastructure/monitoring/flux.yaml).
+      # help must differ per kind: with identical text, only one kind per API group is exported.
+      rbac:
+        extraRules:
+          - apiGroups:
+              - kustomize.toolkit.fluxcd.io
+              - helm.toolkit.fluxcd.io
+              - source.toolkit.fluxcd.io
+              - image.toolkit.fluxcd.io
+            resources:
+              - kustomizations
+              - helmreleases
+              - gitrepositories
+              - helmrepositories
+              - imagerepositories
+              - imagepolicies
+              - imageupdateautomations
+            verbs: ["list", "watch"]
+      customResourceState:
+        enabled: true
+        config:
+          kind: CustomResourceStateMetrics
+          spec:
+            resources:
+              - groupVersionKind:
+                  group: kustomize.toolkit.fluxcd.io
+                  version: v1
+                  kind: Kustomization
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: Ready and suspend state of a Flux Kustomization object.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                    labelsFromPath:
+                      exported_namespace: [metadata, namespace]
+                      ready: [status, conditions, "[type=Ready]", status]
+                      suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: helm.toolkit.fluxcd.io
+                  version: v2
+                  kind: HelmRelease
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: Ready and suspend state of a Flux HelmRelease object.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                    labelsFromPath:
+                      exported_namespace: [metadata, namespace]
+                      ready: [status, conditions, "[type=Ready]", status]
+                      suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: source.toolkit.fluxcd.io
+                  version: v1
+                  kind: GitRepository
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: Ready and suspend state of a Flux GitRepository object.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                    labelsFromPath:
+                      exported_namespace: [metadata, namespace]
+                      ready: [status, conditions, "[type=Ready]", status]
+                      suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: source.toolkit.fluxcd.io
+                  version: v1
+                  kind: HelmRepository
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: Ready and suspend state of a Flux HelmRepository object.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                    labelsFromPath:
+                      exported_namespace: [metadata, namespace]
+                      ready: [status, conditions, "[type=Ready]", status]
+                      suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: image.toolkit.fluxcd.io
+                  version: v1
+                  kind: ImageRepository
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: Ready and suspend state of a Flux ImageRepository object.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                    labelsFromPath:
+                      exported_namespace: [metadata, namespace]
+                      ready: [status, conditions, "[type=Ready]", status]
+                      suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: image.toolkit.fluxcd.io
+                  version: v1
+                  kind: ImagePolicy
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: Ready and suspend state of a Flux ImagePolicy object.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                    labelsFromPath:
+                      exported_namespace: [metadata, namespace]
+                      ready: [status, conditions, "[type=Ready]", status]
+                      suspended: [spec, suspend]
+              - groupVersionKind:
+                  group: image.toolkit.fluxcd.io
+                  version: v1
+                  kind: ImageUpdateAutomation
+                metricNamePrefix: gotk
+                metrics:
+                  - name: resource_info
+                    help: Ready and suspend state of a Flux ImageUpdateAutomation object.
+                    each:
+                      type: Info
+                      info:
+                        labelsFromPath:
+                          name: [metadata, name]
+                    labelsFromPath:
+                      exported_namespace: [metadata, namespace]
+                      ready: [status, conditions, "[type=Ready]", status]
+                      suspended: [spec, suspend]
+      resources:
+        requests:
+          cpu: 60m
+          memory: 96Mi
+    prometheus-node-exporter:
+      resources:
+        requests:
+          cpu: 20m
+          memory: 48Mi
+    prometheus:
+      prometheusSpec:
+        podMonitorSelectorNilUsesHelmValues: false
+        serviceMonitorSelectorNilUsesHelmValues: false
+        scrapeInterval: 30s
+        # storageSpec added 2026-09-03: Prometheus had no storage configured,
+        # so it ran on emptyDir and every pod restart discarded the whole 10d
+        # retention window -- the metrics history existed only for as long as
+        # the pod did. ceph-rbd rather than local-path because it is the only
+        # class here with allowVolumeExpansion, so a 20Gi first guess against
+        # 10d of retention is correctable in place rather than by migration.
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: ceph-rbd
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 20Gi
+        # Limit 2Gi -> 3Gi 2026-09-28: kubecost's 14d peak was 2014Mi, 98% of
+        # the old limit. Request left at 1Gi -- raising it is a capacity call.
+        resources:
+          requests:
+            cpu: 200m
+            memory: 1Gi
+          limits:
+            cpu: "1"
+            memory: 4Gi
+      service:
+        type: NodePort
+        nodePort: 30901

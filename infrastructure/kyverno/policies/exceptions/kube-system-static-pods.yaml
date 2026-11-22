@@ -1,0 +1,21 @@
+# Talos generates the apiserver, controller-manager and scheduler static pods, so they cannot be
+# changed from here. Their mirror pods are the only kube-system pods with no ServiceAccount: the
+# ServiceAccount admission plugin gives every other pod "default" and skips only mirror pods.
+apiVersion: policies.kyverno.io/v1
+kind: PolicyException
+metadata:
+  name: kube-system-static-pods
+  namespace: kyverno
+spec:
+  policyRefs:
+    - name: require-memory-limits
+      kind: ValidatingPolicy
+    - name: require-probes
+      kind: ValidatingPolicy
+    - name: restrict-host-namespaces
+      kind: ValidatingPolicy
+  matchConditions:
+    - name: mirror-pod-no-serviceaccount
+      expression: >-
+        object.metadata.namespace == 'kube-system' && object.kind == 'Pod' &&
+        object.spec.?serviceAccountName.orValue('') == ''

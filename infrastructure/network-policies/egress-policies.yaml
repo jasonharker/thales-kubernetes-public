@@ -1,0 +1,964 @@
+# Egress default-deny -- the second half of K8S-05/NET-06, September 12, 2026.
+#
+# The ingress half (network-policies.yaml, September 9) closed inbound lateral movement.
+# This file closes the outbound direction. A Cilium policy carrying only an egress: block
+# puts the selected endpoints into egress default-deny WITHOUT touching their ingress
+# posture, so the two files are independent and either can be reverted alone.
+#
+# Shape, repeated per namespace: select all pods, allow all same-namespace traffic, allow
+# kube-dns, then name every destination that namespace actually reaches. Same-namespace
+# allow-all is load-bearing for the same reason it is on the ingress side -- the nightly
+# pg_dump/mysqldump CronJob pods carry only a job-name= label and would otherwise be denied
+# their own database at 00:30.
+#
+# Destinations came from observed Hubble flows plus the manifests that generate them
+# (IngressRoutes for traefik, ServiceMonitors for monitoring), not from guesswork. Where a
+# namespace was idle during the capture its peers were read off its manifests instead.
+#
+# toEntities: world is granted deliberately, and only where the destination set is
+# genuinely unbounded and lives OUTSIDE the cluster -- n8n workflow targets, Jenkins build
+# endpoints, authentik LDAP, guacd remote hosts. That is the residual
+# this file does NOT close, and it is worth stating plainly: a compromised pod in one of
+# those namespaces can still reach the LAN and the internet. What it can no longer do is
+# reach another namespace's pods, which is the lateral-pivot path the control exists to
+# close. Namespaces with no external need -- internal, registry, vault, lemp -- get no
+# world at all, so the grant is per-namespace and not a blanket.
+#
+# NOT POLICED, deliberately: kube-system, ceph-csi, local-path-storage and flux-system.
+# These carry the CNI, DNS, the CSI driver and the GitOps engine; a wrong egress rule there
+# is a cluster-down event rather than a broken app, and all four are already privileged
+# enough that constraining their egress buys little. flux-system additionally ships its own
+# allow-egress NetworkPolicy in gotk-components.
+---
+# Wave 1 -- namespaces with NO outbound need beyond DNS. These are the tightest policies in
+# the cluster and the cheapest to verify: anything they emit off-namespace other than :53
+# is a bug.
+#
+# internal serves homepage, which is a static HTML dashboard -- every tile is a plain <a>
+# href rendered in the viewer's browser, so the cards pointing at Proxmox, Technitium and
+# the media tiles generate no traffic from the pod at all. It reaches nothing.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: internal-allow-egress
+  namespace: internal
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+---
+# registry: the in-cluster image registry. It is written to by Jenkins and read by kubelet,
+# both of which are ingress. It originates nothing.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: registry-allow-egress
+  namespace: registry
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+---
+# vault: single replica, Kubernetes auth only. Same-namespace covers raft :8201 for when
+# that stops being true.
+#
+# kube-apiserver is NOT optional here, and the direction is the trap. Kubernetes auth means
+# a client presents its ServiceAccount token to vault, and vault then calls TokenReview on
+# the API SERVER to validate it -- the call originates here, so it is egress. Getting that
+# backwards is what wave 1 of this file shipped: the four ESO SecretStores stayed Valid for
+# several minutes on cached tokens and only flipped to InvalidProviderConfig at the next
+# re-login, in four namespaces that sit nowhere near vault in any manifest. Hubble named it
+# in one line -- vault -> reserved:kube-apiserver TCP/6443 DROPPED -- while nothing in the
+# SecretStore status pointed back here.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: vault-allow-egress
+  namespace: vault
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEntities:
+        - kube-apiserver
+---
+# lemp: the portfolio site. PHP-FPM talks to MariaDB in-namespace and nginx serves it; the
+# application makes no outbound calls of its own. mysqld-exporter is scraped, not scraping.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: lemp-allow-egress
+  namespace: lemp
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+---
+# Wave 2 -- namespaces with real destinations. Each entry names why, because a missing
+# allow here fails silently: the pod gets no RST and no log line, the connection simply
+# hangs until the application's own timeout, and the symptom surfaces somewhere else
+# entirely (a stale secret, an unrun build, a webhook that never fired).
+#
+# external-secrets: the ESO controller dials vault.vault.svc:8200 on behalf of every
+# namespaced SecretStore in THALES, and watches its own CRDs through the API server.
+# Denying the vault leg does not break this namespace, it stops secret refresh in every
+# other one with no error on either side.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: external-secrets-allow-egress
+  namespace: external-secrets
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: vault
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+    - toEntities:
+        - kube-apiserver
+---
+# cloudflared: holds the outbound tunnel to the Cloudflare edge on :7844 (QUIC, falling
+# back to TCP) and forwards every public hostname to traefik's container port 8000 -- the
+# Service says 80, the pod listens on 8000, and the policy has to name the pod port.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cloudflared-allow-egress
+  namespace: cloudflared
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: traefik
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "7844"
+              protocol: ANY
+            - port: "443"
+              protocol: TCP
+---
+# kourier-system: the Knative ingress. It pulls its xDS config from net-kourier-controller
+# in knative-serving on :18000 and proxies to the queue-proxy sidecar on :8012 of every
+# ksvc pod: oracle (pythia), ssot-tools (allocator) and every Backstage tenant namespace
+# (label app.kubernetes.io/managed-by=backstage). Any other new Knative namespace needs
+# adding here and to knative-serving below.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kourier-system-allow-egress
+  namespace: kourier-system
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: knative-serving
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: oracle
+        - matchLabels:
+            io.kubernetes.pod.namespace: ssot-tools
+        - matchLabels:
+            io.cilium.k8s.namespace.labels.app.kubernetes.io/managed-by: backstage
+    - toEntities:
+        - kube-apiserver
+---
+# knative-serving: controller and webhook talk to the API server; the activator proxies
+# cold-start traffic into ksvc pods in oracle, ssot-tools and Backstage tenants; net-kourier-controller
+# programs kourier. Scale-to-zero breaks in a way that looks like a slow app if the
+# activator leg is missing -- the request queues at the activator and times out.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: knative-serving-allow-egress
+  namespace: knative-serving
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: oracle
+        - matchLabels:
+            io.kubernetes.pod.namespace: ssot-tools
+        - matchLabels:
+            io.kubernetes.pod.namespace: kourier-system
+        - matchLabels:
+            io.cilium.k8s.namespace.labels.app.kubernetes.io/managed-by: backstage
+    - toEntities:
+        - kube-apiserver
+---
+# knative-serving controller: resolves each ksvc image tag to a digest, so it talks to the
+# registries itself. Backstage tenants submit tags, not digests; without this the revision
+# fails with "failed to resolve image to digest". Controller pod only.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: knative-serving-controller-allow-registries
+  namespace: knative-serving
+spec:
+  endpointSelector:
+    matchLabels:
+      app: controller
+  egress:
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+---
+# oracle: hestia plus the pythia ksvcs. Every ksvc pod's queue-proxy sidecar reports
+# concurrency to the autoscaler in knative-serving over a websocket -- without that leg the
+# revision never scales and eventually never scales back down. World :443 is the model API
+# the ksvc itself calls.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: oracle-allow-egress
+  namespace: oracle
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: knative-serving
+        - matchLabels:
+            io.kubernetes.pod.namespace: kourier-system
+    - toEntities:
+        - kube-apiserver
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+---
+# ssot-tools: the allocator ksvc. Same queue-proxy/autoscaler leg as oracle. World :443 is
+# GitHub -- it reads thales-docs with a Contents: Read-only PAT.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: ssot-tools-allow-egress
+  namespace: ssot-tools
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: knative-serving
+        - matchLabels:
+            io.kubernetes.pod.namespace: kourier-system
+    - toEntities:
+        - kube-apiserver
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+---
+# kubecost: bundled Prometheus and Grafana are off, so cost-analyzer queries the
+# kube-prometheus-stack Prometheus in monitoring on :9090 -- that leg IS the deployment.
+# World :443 is the public cloud pricing API it refreshes from.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kubecost-allow-egress
+  namespace: kubecost
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    - toEntities:
+        - kube-apiserver
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "53"
+              protocol: UDP
+---
+# nextcloud: postgres and redis are in-namespace. World :443 is the app store, the update
+# checker and federated/OIDC calls out.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: nextcloud-allow-egress
+  namespace: nextcloud
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: traefik
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP
+---
+# jenkins: one of the four namespaces whose destinations were called unenumerable, and the
+# reason is the build endpoints -- every pipeline names its own git remote and its own
+# dependency mirrors, and they live in job configuration rather than in any manifest. So
+# world stands, and it covers LDAPS :636 to timaeus/simmias, GitHub, and the Trivy vuln DB
+# in one grant. What is pinned is the in-cluster half: Kaniko pushes to the registry
+# namespace on :5000, and the Kubernetes plugin (it holds a ClusterRoleBinding, so it is in
+# use) schedules agents through the API server.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: jenkins-allow-egress
+  namespace: jenkins
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: registry
+      toPorts:
+        - ports:
+            - port: "5000"
+              protocol: TCP
+    - toEntities:
+        - kube-apiserver
+    - toEntities:
+        - world
+---
+# authentik: LDAP source against the domain controllers on VLAN 120, which are outside the
+# cluster and therefore world. Postgres and redis are in-namespace. This is the namespace
+# to be most careful reverting: it fronts SSO for everything else, so a wrong rule here
+# reads as "the whole lab is down" rather than as an authentik fault.
+#
+# kube-apiserver is authentik-worker's outpost controller reconciling through its built-in
+# Kubernetes service connection. It runs on the default ServiceAccount with no RoleBinding,
+# so the API rejects the calls anyway -- but denying the TCP connect instead of the request
+# is strictly worse: the worker retries against a connect timeout rather than taking a fast
+# 403, and the task backs up in its queue. RBAC is the real control on this path; the
+# policy should not pretend to be a second one.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: authentik-allow-egress
+  namespace: authentik
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEntities:
+        - kube-apiserver
+    - toEntities:
+        - world
+---
+# guacamole: guacd opens RDP, SSH and VNC to whatever hosts the connection list names, and
+# that list lives in guacamole's own postgres -- unenumerable from any manifest, so world.
+# The traefik and authentik legs cover the OIDC token exchange, which is server-to-server
+# whichever hostname it is configured against.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: guacamole-allow-egress
+  namespace: guacamole
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: traefik
+        - matchLabels:
+            io.kubernetes.pod.namespace: authentik
+    - toEntities:
+        - world
+    # guacd runs hostNetwork, so the web app's leg to it on 4822 lands on a node identity
+    # rather than a guacamole endpoint: remote-node, or host when both share a node.
+    - toEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "4822"
+              protocol: TCP
+---
+# n8n: the last of the four. alert-triage reads the cluster through the read-only
+# n8n-triage ServiceAccount and calls OpenRouter; weekly-audit polls the Proxmox API on
+# 10.20.110.11-13:8006 and checks etcd and TLS expiry against the nodes themselves. That
+# last one is why host and remote-node appear here and nowhere else in this file: the
+# control-plane addresses carry node identity, not world, so a world grant alone does not
+# reach them and the cert-expiry check would return empty rather than error.
+# traefik :8443 is the same check against the *.thales.internal wildcard on 10.20.130.100;
+# an in-cluster pod reaching the LoadBalancer lands on traefik with pod identity.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: n8n-allow-egress
+  namespace: n8n
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: traefik
+      toPorts:
+        - ports:
+            - port: "8443"
+              protocol: TCP
+    - toEntities:
+        - kube-apiserver
+    - toEntities:
+        - host
+        - remote-node
+    - toEntities:
+        - world
+---
+# Wave 3 -- the two cross-cutting namespaces, plus the three namespaces the September 9
+# ingress wave never covered.
+#
+# monitoring and traefik both get egress to every namespace, and that is a deliberate
+# choice rather than a shortcut. Both are cross-cutting by function: Prometheus scrapes
+# whatever its 24 ServiceMonitors point at, and traefik proxies whatever its 22
+# IngressRoutes name. Pinning either to a destination list means every new ServiceMonitor
+# or IngressRoute also needs an edit here, and forgetting it fails silently -- a target
+# that reads as DOWN, or a route that returns 504. The pivot resistance bought is close to
+# nil, because both namespaces are already entitled to reach nearly everything by design.
+# The all-namespaces selector is matchExpressions/Exists on the namespace label, not an
+# empty {} selector: inside a namespaced CiliumNetworkPolicy an empty toEndpoints selector
+# means this namespace only.
+#
+# monitoring: host and remote-node are the node_exporter, kubelet and etcd scrapes, which
+# carry node identity rather than world. World covers the off-cluster targets -- Proxmox
+# :8006, Technitium :5380, SNMP :161 on the switch, and the node_exporters on the LXCs.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: monitoring-allow-egress
+  namespace: monitoring
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchExpressions:
+            - key: io.kubernetes.pod.namespace
+              operator: Exists
+    - toEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+    - toEntities:
+        - world
+---
+# traefik: every backend it fronts is in-cluster, so it gets no world at all -- there is no
+# such thing as a traefik route to an external upstream here, and if one is ever added this
+# policy is where it will surface as a 504.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: traefik-allow-egress
+  namespace: traefik
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchExpressions:
+            - key: io.kubernetes.pod.namespace
+              operator: Exists
+    - toEntities:
+        - kube-apiserver
+---
+# traefik ingress -- the exception the September 9 wave left open, on the grounds that its
+# LoadBalancer and L2-announcement identity path was uncharacterised. It is characterised
+# now, and it lands the same way the internal namespace did: a CiliumNetworkPolicy with
+# fromEntities, because no ipBlock can name a node identity.
+#
+# The Service publishes 80 and NodePort 30880; the pods listen on 8000 (web), and 443 ->
+# 8443 (websecure) since the *.thales.internal wildcard. Ports in policy are pod ports, so
+# 8000 and 8443 are the numbers that matter. externalTrafficPolicy: Local
+# means the real client IP survives for LoadBalancer traffic, which resolves to world;
+# remote-node and host cover the NodePort fallback on 10.20.130.21-24:30880 and kubelet.
+# Port 8080 is the traefik entrypoint serving /ping, which is how kubelet probes it.
+#
+# Allowing world on 8000 concedes nothing that the LoadBalancer and NodePort had not
+# already conceded to every host pfSense lets onto VLAN 130. What it does buy is the rest:
+# in-cluster pods carry pod identity and never world, so no other namespace may open a
+# connection to traefik on any port, and 9100/8080 stay closed to the outside. The one
+# exception is n8n on 8443, for weekly-audit's wildcard cert-expiry handshake.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: traefik-allow-ingress
+  namespace: traefik
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: cloudflared
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: n8n
+      toPorts:
+        - ports:
+            - port: "8443"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "9100"
+              protocol: TCP
+    - fromEntities:
+        - world
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "8443"
+              protocol: TCP
+    - fromEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+---
+# kubecost ingress: newer than the September 9 wave, so it was never covered rather than
+# deliberately skipped. traefik serves kubecost.thales.internal against cost-analyzer :9090,
+# Prometheus scrapes :9003, and the aggregator, forecasting and cloud-cost services talk to
+# each other in-namespace.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kubecost-allow-ingress
+  namespace: kubecost
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: traefik
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "9003"
+              protocol: TCP
+---
+# oracle ingress: also newer than the wave. hestia is served directly by traefik on :80;
+# pythia is a ksvc, so its traffic arrives from kourier-system and, on a cold start, from
+# the activator in knative-serving -- both into the queue-proxy sidecar on :8012. Prometheus
+# scrapes the queue-proxy metrics on :9090/:9091.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: oracle-allow-ingress
+  namespace: oracle
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: traefik
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kourier-system
+        - matchLabels:
+            io.kubernetes.pod.namespace: knative-serving
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+            - port: "9091"
+              protocol: TCP
+---
+# portfolio-staging: a static site and the Flagger loadtester. Neither makes an outbound
+# call beyond this namespace, so no world -- the loadtester's curls target
+# portfolio-canary in-namespace.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: portfolio-staging-allow-egress
+  namespace: portfolio-staging
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+---
+# flagger-system: the controller watches and patches Canaries, Deployments and Services
+# through the API server, and calls the portfolio-staging and portfolio loadtesters on :8080. No world,
+# and no monitoring :9090 -- no Canary uses Prometheus metrics yet (see
+# infrastructure/helm/flagger.yaml). A Slack/Discord AlertProvider would need world :443.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: flagger-system-allow-egress
+  namespace: flagger-system
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEntities:
+        - kube-apiserver
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: portfolio-staging
+            app: flagger-loadtester
+        - matchLabels:
+            io.kubernetes.pod.namespace: portfolio
+            app: flagger-loadtester
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+---
+# portfolio: static files from unprivileged nginx; no outbound calls at all. The
+# loadtester's curls to portfolio-canary are same-namespace.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: portfolio-allow-egress
+  namespace: portfolio
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+---
+# reloader: watches Secrets and patches Deployments through the API server. Nothing else.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: reloader-allow-egress
+  namespace: reloader
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEntities:
+        - kube-apiserver
+---
+# city-pulse: serve and Postgres reach nothing outside the namespace. Only the nightly
+# CronJob's pods (label app: citypulse-nightly) get world :443, for the agency datasets --
+# southernnevadahealthdistrict.org, maps.clarkcountynv.gov, services1.arcgis.com. Two
+# policies, because a CNP selects its endpoints once: the namespace-wide one below, and
+# the world grant that adds to it for the nightly pods only.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: city-pulse-allow-egress
+  namespace: city-pulse
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: city-pulse-nightly-allow-world
+  namespace: city-pulse
+spec:
+  endpointSelector:
+    matchLabels:
+      app: citypulse-nightly
+  egress:
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+---
+# kyverno: everything it does goes through the API server. No world: no policy here pulls
+# image metadata from a registry, so ImageValidatingPolicy would need a rule added.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kyverno-allow-egress
+  namespace: kyverno
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEntities:
+        - kube-apiserver
+---
+# backstage: every outbound need is off-cluster, so world, port-scoped like
+# city-pulse-nightly. 443 is GitHub (App tokens, PRs, tenant discovery) and the Authentik
+# issuer at authentik.example.com, which pods resolve to Cloudflare. 636 is LDAPS to
+# timaeus/simmias. No cross-namespace legs.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: backstage-allow-egress
+  namespace: backstage
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - {}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "636"
+              protocol: TCP

@@ -1,0 +1,415 @@
+{
+  "id": "thalesWeeklyAud1",
+  "name": "THALES weekly audit",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                0
+              ],
+              "triggerAtHour": 3,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "schedule",
+      "name": "Weekly schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://10.20.110.11:8006/api2/json/cluster/resources?type=vm",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "get-guest-inventory",
+      "name": "Get guest inventory",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesProxmoxAud1",
+          "name": "proxmox-audit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://10.20.110.11:8006/api2/json/nodes/thales-01/storage/pbs-main/content?content=backup",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "get-backups-thales-01",
+      "name": "Get backups thales-01",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesProxmoxAud1",
+          "name": "proxmox-audit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://10.20.110.12:8006/api2/json/nodes/thales-02/storage/pbs-main/content?content=backup",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "get-backups-thales-02",
+      "name": "Get backups thales-02",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesProxmoxAud1",
+          "name": "proxmox-audit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://10.20.110.13:8006/api2/json/nodes/thales-03/storage/pbs-main/content?content=backup",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "get-backups-thales-03",
+      "name": "Get backups thales-03",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesProxmoxAud1",
+          "name": "proxmox-audit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://kubernetes.default.svc/api/v1/namespaces",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "get-k8s-namespaces",
+      "name": "Get k8s namespaces",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesK8sRead001",
+          "name": "k8s-readonly"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://kubernetes.default.svc/api/v1/nodes",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "get-k8s-nodes",
+      "name": "Get k8s nodes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1320,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesK8sRead001",
+          "name": "k8s-readonly"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "https://api.github.com/repos/jasonharker/thales-docs/contents/THALES-SSOT.md",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github.raw+json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "thales-weekly-audit"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "get-ssot",
+      "name": "Get SSOT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesGithubSsot1",
+          "name": "github-ssot-read"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const tls = require('tls');\n\n// ---------- 1. Cert expiry: raw TLS handshake, no HTTP node needed ----------\n// ponytail: the etcd ADMIN client cert named in the SSOT (expires 2027-07-12)\n// lives only as a local file on hippodamus, not reachable over the network --\n// that one is checked by etcd-snapshot.sh itself, not here. This leg covers\n// what's actually fetchable: kube-apiserver, Proxmox and AD LDAPS certs.\n// Not here: Talos apid :50000 (leaf auto-rotates daily, would always read <30d);\n// pfSense GUI + PBS (pfSense rules block them).\nconst certTargets = [\n  {label:'anaximander-cp1 kube-apiserver', host:'10.20.130.10', port:6443},\n  {label:'anaximander-cp2 kube-apiserver', host:'10.20.130.11', port:6443},\n  {label:'anaximander-cp3 kube-apiserver', host:'10.20.130.12', port:6443},\n  {label:'thales-01 proxmox',        host:'10.20.110.11', port:8006},\n  {label:'thales-02 proxmox',        host:'10.20.110.12', port:8006},\n  {label:'thales-03 proxmox',        host:'10.20.110.13', port:8006},\n  {label:'timaeus ldaps',            host:'10.20.120.10', port:636},\n  {label:'simmias ldaps',            host:'10.20.120.11', port:636},\n  {label:'traefik *.thales.internal',   host:'10.20.130.100', port:443},\n];\n\nfunction checkCert(host, port) {\n  return new Promise((resolve) => {\n    let done = false;\n    const sock = tls.connect({host, port, rejectUnauthorized:false, timeout:8000}, () => {\n      const cert = sock.getPeerCertificate();\n      done = true; sock.end();\n      if (!cert || !cert.valid_to) { resolve({error:'no cert returned'}); return; }\n      const daysLeft = Math.floor((new Date(cert.valid_to) - Date.now()) / 86400000);\n      resolve({validTo: cert.valid_to, daysLeft});\n    });\n    sock.on('error', (e) => { if (!done) resolve({error: e.message}); });\n    sock.on('timeout', () => { if (!done) { sock.destroy(); resolve({error:'timeout'}); } });\n  });\n}\n\nconst certResults = [];\nfor (const t of certTargets) certResults.push({...t, ...(await checkCert(t.host, t.port))});\nconst certUrgent = certResults.filter(r => typeof r.daysLeft === 'number' && r.daysLeft < 30);\nconst certLines = certResults.map(r => r.error\n  ? `  ⚠️ ${r.label} (${r.host}) — unreachable: ${r.error}`\n  : `  ${r.daysLeft < 30 ? '🔴' : '🟢'} ${r.label} — ${r.daysLeft}d left (${r.validTo})`);\n\n// ---------- 2. Backup freshness via Proxmox storage/content --\n// PBS's own REST API is unreachable from this pod (confirmed empirically);\n// Proxmox proxies the same backup listing and IS reachable, so use that. ----------\nconst grab = (nodeName, fallback) => {\n  try {\n    const j = $(nodeName).first().json;\n    return (j && j.error === undefined) ? j : fallback;\n  } catch (e) { return fallback; }\n};\n\nconst inv = grab('Get guest inventory', {});\nconst guests = Array.isArray(inv.data) ? inv.data : [];\n\nconst backupNodeNames = ['Get backups thales-01', 'Get backups thales-02', 'Get backups thales-03'];\nconst allBackups = [];\nfor (const n of backupNodeNames) {\n  const d = grab(n, {});\n  if (Array.isArray(d.data)) allBackups.push(...d.data);\n}\n\nconst now = Date.now() / 1000;\nconst backupLines = [];\nlet staleCount = 0;\nfor (const g of guests) {\n  if (!g.vmid) continue;\n  const hits = allBackups.filter(b => Number(b.vmid) === Number(g.vmid));\n  const newest = hits.length ? Math.max(...hits.map(b => b.ctime || 0)) : 0;\n  const ageHrs = newest ? Math.round((now - newest) / 3600) : null;\n  if (!newest || ageHrs > 48) {\n    staleCount++;\n    backupLines.push(`  🔴 ${g.name || g.vmid} (vmid ${g.vmid}) — ${newest ? `last backup ${ageHrs}h ago` : 'no backup found'}`);\n  }\n}\nconst backupSummary = staleCount\n  ? `${staleCount} of ${guests.length} guests have no backup in the last 48h:\\n${backupLines.join('\\n')}`\n  : `all ${guests.length} guests backed up within the last 48h.`;\n\n// ---------- 2b. K8s PVC images (k8s-rbd-backup.sh on thales-02 -> PBS ns k8s) --\n// PVE's PBS listing hides host-type backups and PBS :8007 is unreachable from\n// this pod, so the script leaves a marker in thales-02's node description. ----------\nconst marker = String((grab('Get k8s-rbd marker', {}).data || {}).description || '');\nconst kOk = Number((marker.match(/last_ok=(\\d+)/) || [])[1] || 0);\nconst kFail = Number((marker.match(/last_fail=(\\d+)/) || [])[1] || 0);\nconst kGroups = (marker.match(/groups=(\\d+)/) || [])[1] || '?';\nconst kAge = kOk ? Math.round((now - kOk) / 3600) : null;\nconst k8sBackupLine = !kOk\n  ? '  🔴 K8s PVCs — no k8s-rbd-backup marker on thales-02'\n  : (kAge > 26 || kFail > kOk)\n    ? `  🔴 K8s PVCs — last ok ${kAge}h ago${kFail > kOk ? ', latest run FAILED' : ''} (journalctl -u k8s-rbd-backup on thales-02)`\n    : `  🟢 K8s PVCs — ${kGroups} volumes, last ok ${kAge}h ago`;\n\n// ---------- 3. Drift vs SSOT: substring presence-check, deliberately a --\n// smoke alarm, not a full markdown parser (per plan). ----------\nconst ssotRaw = (() => { try { return $('Get SSOT').first().json.data || ''; } catch (e) { return ''; } })();\n\nconst nsData = grab('Get k8s namespaces', {});\nconst liveNamespaces = (nsData.items || []).map(i => i.metadata.name);\nconst m = ssotRaw.match(/\\*\\*K8s namespaces\\*\\*:\\s*(.+)/);\nconst docNamespaces = m ? m[1].split(',').map(s => s.split('(')[0].trim().replace(/\\.$/, '')) : [];\nconst alwaysPresent = ['default', 'kube-public', 'kube-node-lease'];\nconst nsMissing = liveNamespaces.filter(n => !docNamespaces.includes(n) && !alwaysPresent.includes(n));\nconst nsStale = docNamespaces.filter(n => n && !liveNamespaces.includes(n));\n\nconst nodesData = grab('Get k8s nodes', {});\nconst liveNodeIPs = (nodesData.items || []).flatMap(i => (i.status && i.status.addresses || [])\n  .filter(a => a.type === 'InternalIP').map(a => a.address));\nconst nodeIPsNotInSSOT = liveNodeIPs.filter(ip => ssotRaw && !ssotRaw.includes(ip));\n\nconst guestsNotInSSOT = guests.filter(g => g.name && ssotRaw && !ssotRaw.includes(g.name));\n\nconst driftLines = [];\nif (nsMissing.length) driftLines.push(`  live namespace not in SSOT list: ${nsMissing.join(', ')}`);\nif (nsStale.length) driftLines.push(`  SSOT lists namespace not seen live: ${nsStale.join(', ')}`);\nif (nodeIPsNotInSSOT.length) driftLines.push(`  live node IP not found anywhere in SSOT text: ${nodeIPsNotInSSOT.join(', ')}`);\nif (guestsNotInSSOT.length) driftLines.push(`  Proxmox guest name not found anywhere in SSOT text: ${guestsNotInSSOT.map(g => `${g.name} (vmid ${g.vmid})`).join(', ')}`);\nconst driftSummary = driftLines.length ? driftLines.join('\\n') : 'no drift detected (namespaces, node IPs, guest names all found in the SSOT text).';\n\n// ---------- assemble ----------\nconst urgentBlock = certUrgent.length\n  ? `🚨 **URGENT — cert expiring soon**\\n${certUrgent.map(c => `  ${c.label}: ${c.daysLeft}d left`).join('\\n')}\\n\\n`\n  : '';\n\nconst message = [\n  urgentBlock + '**THALES weekly audit**',\n  '',\n  '**Certs**',\n  certLines.join('\\n'),\n  '',\n  '**Backups (last 48h, via Proxmox storage listing)**',\n  backupSummary,\n  k8sBackupLine,\n  '',\n  '**Drift vs SSOT**',\n  driftSummary,\n].join('\\n').slice(0, 1900);\n\nreturn [{ json: { message } }];\n"
+      },
+      "id": "build-report",
+      "name": "Build report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "operation": "sendLegacy",
+        "content": "={{ $json.message }}",
+        "options": {}
+      },
+      "id": "post-to-discord",
+      "name": "Post to Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        300
+      ],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "thalesDiscord001",
+          "name": "discord-triage"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://10.20.110.12:8006/api2/json/nodes/thales-02/config",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "allowUnauthorizedCerts": true
+        }
+      },
+      "id": "get-k8s-rbd-marker",
+      "name": "Get k8s-rbd marker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        450
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "thalesProxmoxAud1",
+          "name": "proxmox-audit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Weekly schedule": {
+      "main": [
+        [
+          {
+            "node": "Get guest inventory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get guest inventory": {
+      "main": [
+        [
+          {
+            "node": "Get backups thales-01",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get backups thales-01": {
+      "main": [
+        [
+          {
+            "node": "Get backups thales-02",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get backups thales-02": {
+      "main": [
+        [
+          {
+            "node": "Get backups thales-03",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get backups thales-03": {
+      "main": [
+        [
+          {
+            "node": "Get k8s-rbd marker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get k8s namespaces": {
+      "main": [
+        [
+          {
+            "node": "Get k8s nodes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get k8s nodes": {
+      "main": [
+        [
+          {
+            "node": "Get SSOT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get SSOT": {
+      "main": [
+        [
+          {
+            "node": "Build report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build report": {
+      "main": [
+        [
+          {
+            "node": "Post to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get k8s-rbd marker": {
+      "main": [
+        [
+          {
+            "node": "Get k8s namespaces",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}
