@@ -33,7 +33,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pyyaml==X.Y.Z
+      - run: pip install pyyaml
       - name: Paths, registry entry, rendered shape
         id: gate
         run: |
